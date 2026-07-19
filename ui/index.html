@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>etzhayyim-project-ma | Global M&A Brokerage</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main>
+    <h1>Global M&A 仲介サービス</h1>
+    <p>APQC / ISCO / ISIC actor 統合ダッシュボード（sales・marketing・matching・PMI対応）</p>
+
+    <section>
+      <h2>Deal Pipeline</h2>
+      <ol id="pipeline"></ol>
+    </section>
+
+    <section>
+      <h2>Actor Mapping</h2>
+      <table>
+        <thead><tr><th>Framework</th><th>Actor</th><th>Role</th></tr></thead>
+        <tbody id="actors"></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Stage Ownership (Requested focus)</h2>
+      <table>
+        <thead><tr><th>Stage</th><th>Owner Actors</th></tr></thead>
+        <tbody id="stage-owner"></tbody>
+      </table>
+    </section>
+  </main>
+  <script src="./app.js"></script>
+</body>
+</html>

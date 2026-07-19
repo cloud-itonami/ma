@@ -1,0 +1,238 @@
+{
+  "@context": {
+    "prov": "http://www.w3.org/ns/prov#",
+    "dct": "http://purl.org/dc/terms/",
+    "etzhayyim": "https://etzhayyim.com/schema#",
+    "name": "dct:title",
+    "description": "dct:description",
+    "status": "etzhayyim:status"
+  },
+  "@id": "https://etzhayyim.com/projects/etzhayyim-project-ma",
+  "@type": "prov:Entity",
+  "name": "etzhayyim-project-ma (Multi-Actor Fund Management Platform)",
+  "description": "Integration project that designs all fund management business processes as actor-based workflows by combining APQC/ISCO/ISIC wasm actors.",
+  "etzhayyim:category": "etzhayyim-project-ma",
+  "status": "In Design",
+  "prov:wasGeneratedBy": {
+    "@type": "prov:Activity",
+    "name": "Cross-taxonomy actor integration and orchestration design"
+  },
+  "rdfUnifiedDocuments": {
+    "@type": "Dataset",
+    "name": "Unified top-level RDF/JSON-LD documents",
+    "description": "Consolidated from project top-level *.jsonld files except PROJECT.jsonld.",
+    "documents": [
+      {
+        "fileName": "ARCHITECTURE.jsonld",
+        "content": {
+          "@context": {
+            "etzhayyim": "https://etzhayyim.com/schema#",
+            "name": "http://purl.org/dc/terms/title",
+            "description": "http://purl.org/dc/terms/description"
+          },
+          "@id": "https://etzhayyim.com/projects/etzhayyim-project-ma/architecture",
+          "@type": "etzhayyim:Architecture",
+          "name": "MA Fund Management Actor-Oriented Architecture",
+          "description": "End-to-end business process design where each process step is owned by an actor and coordinated by an orchestration actor.",
+          "etzhayyim:components": [
+            {
+              "name": "fund-management-ma-orchestrator",
+              "type": "service-actor",
+              "responsibility": "Drive BPMN-like process transitions across APQC/ISCO/ISIC actors"
+            },
+            {
+              "name": "fund-management-ma-policy-gateway",
+              "type": "service-actor",
+              "responsibility": "Aggregate industry and compliance constraints from ISIC actors"
+            },
+            {
+              "name": "fund-management-ma-apqc-mcp-adapter",
+              "type": "adapter-actor",
+              "responsibility": "Expose MCP tools for APQC actors that currently provide only TWF activity handlers"
+            },
+            {
+              "name": "fund-management-ma-workbench-ui",
+              "type": "ui-app",
+              "responsibility": "Operator workflow view for subscriptions, portfolio actions, settlements, and disclosures"
+            }
+          ],
+          "etzhayyim:processes": [
+            {
+              "name": "P1 Investor Onboarding & Subscription",
+              "actors": [
+                "isco-2412-financial-and-investment-advisers",
+                "fund-management-ma-apqc-mcp-adapter",
+                "apqc-9-4-accounts-receivable",
+                "isic-6431-mutual-funds"
+              ]
+            },
+            {
+              "name": "P2 Allocation & Trade Decision",
+              "actors": [
+                "isco-2412-investment-analyst",
+                "isco-1211-treasury-manager",
+                "apqc-9-0-financial-management"
+              ]
+            },
+            {
+              "name": "P3 NAV / Cost / Performance Close",
+              "actors": [
+                "fund-management-ma-apqc-mcp-adapter",
+                "apqc-9-1-2-cost-accounting",
+                "apqc-9-0-financial-management",
+                "isic-6430-trusts-funds"
+              ]
+            },
+            {
+              "name": "P4 Pension / Disclosure Compliance",
+              "actors": [
+                "isic-6530-pension-funding",
+                "isic-6431-mutual-funds",
+                "apqc-9-0-financial-management"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "fileName": "activities.jsonld",
+        "content": {
+          "@context": {
+            "etzhayyim": "https://etzhayyim.com/schema#",
+            "name": "http://purl.org/dc/terms/title",
+            "description": "http://purl.org/dc/terms/description"
+          },
+          "@id": "https://etzhayyim.com/projects/etzhayyim-project-ma/activities",
+          "@type": "etzhayyim:ActivityCollection",
+          "etzhayyim:activities": [
+            {
+              "name": "subscription-intake",
+              "description": "Collect order, suitability, and payment details",
+              "ownedBy": "isco-2412-financial-and-investment-advisers",
+              "emits": [
+                "fm.subscription.requested"
+              ]
+            },
+            {
+              "name": "cash-collection",
+              "description": "Reconcile incoming subscription funds",
+              "ownedBy": "fund-management-ma-apqc-mcp-adapter",
+              "delegatesTo": "apqc-9-4-accounts-receivable",
+              "consumes": [
+                "fm.subscription.requested"
+              ],
+              "emits": [
+                "fm.subscription.settled"
+              ]
+            },
+            {
+              "name": "portfolio-proposal",
+              "description": "Generate allocation proposal and scenario analytics",
+              "ownedBy": "isco-2412-investment-analyst",
+              "consumes": [
+                "fm.subscription.settled"
+              ],
+              "emits": [
+                "fm.trade.proposed"
+              ]
+            },
+            {
+              "name": "liquidity-approval",
+              "description": "Validate treasury impact and approve execution",
+              "ownedBy": "isco-1211-treasury-manager",
+              "consumes": [
+                "fm.trade.proposed"
+              ],
+              "emits": [
+                "fm.trade.approved"
+              ]
+            },
+            {
+              "name": "fund-ledger-close",
+              "description": "Post fund accounting and NAV close",
+              "ownedBy": "apqc-9-0-financial-management",
+              "consumes": [
+                "fm.trade.approved"
+              ],
+              "emits": [
+                "fm.nav.calculated"
+              ]
+            },
+            {
+              "name": "cost-attribution",
+              "description": "Compute cost basis and fee allocation",
+              "ownedBy": "fund-management-ma-apqc-mcp-adapter",
+              "delegatesTo": "apqc-9-1-2-cost-accounting",
+              "consumes": [
+                "fm.nav.calculated"
+              ],
+              "emits": [
+                "fm.close.completed"
+              ]
+            },
+            {
+              "name": "industry-compliance-check",
+              "description": "Apply ISIC vehicle-specific controls and disclosures",
+              "ownedBy": "fund-management-ma-policy-gateway",
+              "consumes": [
+                "fm.close.completed"
+              ],
+              "emits": [
+                "fm.disclosure.published"
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "fileName": "capabilities.jsonld",
+        "content": {
+          "@context": {
+            "etzhayyim": "https://etzhayyim.com/schema#",
+            "name": "http://purl.org/dc/terms/title",
+            "description": "http://purl.org/dc/terms/description"
+          },
+          "@id": "https://etzhayyim.com/projects/etzhayyim-project-ma/capabilities",
+          "@type": "etzhayyim:CapabilityCollection",
+          "etzhayyim:capabilities": [
+            {
+              "name": "cross-taxonomy actor orchestration",
+              "description": "Compose APQC process actors, ISCO role actors, and ISIC industry actors into one executable workflow"
+            },
+            {
+              "name": "fund process observability",
+              "description": "Provide workflow-level tracing from subscription through disclosure"
+            },
+            {
+              "name": "fork-based actor reuse",
+              "description": "Maintain reusable wasm actor code by forking from source projects with a reproducible script"
+            }
+          ]
+        }
+      },
+      {
+        "fileName": "project.jsonld",
+        "content": {
+          "@context": {
+            "prov": "http://www.w3.org/ns/prov#",
+            "dct": "http://purl.org/dc/terms/",
+            "etzhayyim": "https://etzhayyim.com/schema#",
+            "name": "dct:title",
+            "description": "dct:description",
+            "status": "etzhayyim:status"
+          },
+          "@id": "https://etzhayyim.com/projects/etzhayyim-project-ma",
+          "@type": "prov:Entity",
+          "name": "etzhayyim-project-ma (Multi-Actor Fund Management Platform)",
+          "description": "Integration project that designs all fund management business processes as actor-based workflows by combining APQC/ISCO/ISIC wasm actors.",
+          "etzhayyim:category": "etzhayyim-project-ma",
+          "status": "In Design",
+          "prov:wasGeneratedBy": {
+            "@type": "prov:Activity",
+            "name": "Cross-taxonomy actor integration and orchestration design"
+          }
+        }
+      }
+    ]
+  }
+}

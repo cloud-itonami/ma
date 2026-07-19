@@ -1,0 +1,25 @@
+project: etzhayyim-project-ma
+strategy: "fork-from-source-project-actors"
+source_projects:
+  - etzhayyim-project-apqc
+  - etzhayyim-project-open-isco
+  - etzhayyim-project-open-isic
+forks:
+  - source: projects/etzhayyim-project-apqc/wasm/etzhayyim-performer-sys-etzhayyim-actors-pba7d22f-svc-apqc-9-0-financial-management-cvaeukqn
+    target: projects/etzhayyim-project-ma/wasm/forks/apqc-9-0-financial-management
+  - source: projects/etzhayyim-project-apqc/wasm/etzhayyim-performer-sys-etzhayyim-actors-pba7d22f-svc-apqc-9-1-2-cost-accounting-hs5myyk4
+    target: projects/etzhayyim-project-ma/wasm/forks/apqc-9-1-2-cost-accounting
+  - source: projects/etzhayyim-project-apqc/wasm/etzhayyim-performer-sys-etzhayyim-actors-pba7d22f-svc-apqc-9-4-accounts-receivable-sq8qt88a
+    target: projects/etzhayyim-project-ma/wasm/forks/apqc-9-4-accounts-receivable
+  - source: projects/etzhayyim-project-open-isco/wasm/etzhayyim-performer-sys-etzhayyim-actors-pba7d22f-psn-isco-1211-treasury-manager-7df4q796
+    target: projects/etzhayyim-project-ma/wasm/forks/isco-1211-treasury-manager
+  - source: projects/etzhayyim-project-open-isco/wasm/etzhayyim-performer-sys-etzhayyim-actors-pba7d22f-psn-isco-2412-financial-and-investment-advisers-hhddguqm
+    target: projects/etzhayyim-project-ma/wasm/forks/isco-2412-financial-and-investment-advisers
+  - source: projects/etzhayyim-project-open-isco/wasm/etzhayyim-performer-sys-etzhayyim-actors-pba7d22f-psn-isco-2412-investment-analyst-vccbzmvf
+    target: projects/etzhayyim-project-ma/wasm/forks/isco-2412-investment-analyst
+  - source: projects/etzhayyim-project-open-isic/wasm/etzhayyim-performer-sys-etzhayyim-actors-pba7d22f-org-isic-k-64-643-6430-qkt6zyvr
+    target: projects/etzhayyim-project-ma/wasm/forks/isic-6430-trusts-funds
+  - source: projects/etzhayyim-project-open-isic/wasm/etzhayyim-performer-sys-etzhayyim-actors-pba7d22f-org-isic-k-64-643-6431-sfmtdkzd
+    target: projects/etzhayyim-project-ma/wasm/forks/isic-6431-mutual-funds
+  - source: projects/etzhayyim-project-open-isic/wasm/etzhayyim-performer-sys-etzhayyim-actors-pba7d22f-org-isic-k-65-653-6530-rveryau2
+    target: projects/etzhayyim-project-ma/wasm/forks/isic-6530-pension-funding
