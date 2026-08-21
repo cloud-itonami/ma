@@ -1,0 +1,261 @@
+#!/usr/bin/env nbb
+;; What this repository actually contains, checked against what it says it contains.
+;;
+;; Run:  nbb scripts/verify-repo-claims.cljs
+;;
+;; Exit codes are three-valued on purpose (ADR-2608136000 in the superproject):
+;;   0  every check ran and passed
+;;   1  a check ran and failed
+;;   2  a check could not run — an input was unreadable, so the answer is unknown.
+;;      This is NOT 0. A verifier that cannot read its inputs must not look clean.
+;;
+;; The last section prints OBSERVED lines. Those are measurements of a known,
+;; documented defect (docs/adr/0001) — they are reported, never scored. PASS and
+;; OBSERVED carry different prefixes so "we looked at it" can never be read as
+;; "it is fine".
+
+(ns verify-repo-claims
+  (:require [clojure.edn :as edn]
+            [clojure.string :as str]
+            ["fs" :as fs]
+            ["child_process" :as cp]))
+
+(def ^:private failures (atom []))
+(def ^:private unknowns (atom []))
+(def ^:private ran (atom 0))
+
+(defn- pass! [label detail]
+  (swap! ran inc)
+  (println (str "PASS      " label " — " detail)))
+
+(defn- fail! [label detail]
+  (swap! ran inc)
+  (swap! failures conj label)
+  (println (str "FAIL      " label " — " detail)))
+
+(defn- one-line
+  "Collapse to a single line. Multi-line detail survives `grep '^UNKNOWN'` in a
+   log only if it is on the line that matches; otherwise the cause is present in
+   the file and absent from every summary anyone reads."
+  [s]
+  (str/replace (str/trim (str s)) #"\s*\n\s*" " / "))
+
+(defn- unknown!
+  "An input could not be read. Recorded separately from a failure: 'the claim is
+   false' and 'I could not check the claim' are different answers."
+  [label detail]
+  (swap! unknowns conj label)
+  (println (str "UNKNOWN   " label " — " (one-line detail))))
+
+(defn- observe! [label detail]
+  (println (str "OBSERVED  " label " — " (one-line detail))))
+
+(defn- observing!
+  "Run an observation group. An observation that throws must not kill the run:
+   an uncaught throw here exits 1 (which reads as 'a check failed') and skips the
+   summary entirely, so the run would report neither a pass, a failure, nor the
+   evidence floor. Route it to UNKNOWN instead, which is exit 2."
+  [label f]
+  (try (f)
+       (catch :default e
+         (unknown! label (str (.-message e))))))
+
+(defn- check! [label thunk]
+  (try
+    (let [[ok detail] (thunk)]
+      (if ok (pass! label detail) (fail! label detail)))
+    (catch :default e
+      ;; Keep the exception text, and the subprocess stderr when there is one.
+      ;; A checker that records only "it threw" cannot be debugged from its own
+      ;; output — the cause is usually in the body it discarded.
+      (unknown! label (let [msg (str (.-message e))
+                            err (some-> (.-stderr e) str str/trim not-empty)]
+                        ;; Node already appends stderr to .message for execSync;
+                        ;; only add it when it is genuinely missing, so the cause
+                        ;; is never dropped and never doubled.
+                        (if (and err (not (str/includes? msg err)))
+                          (str msg " | stderr: " err)
+                          msg))))))
+
+(defn- slurp! [path]
+  (if (fs/existsSync path)
+    (fs/readFileSync path "utf8")
+    (throw (js/Error. (str "missing input: " path)))))
+
+(defn- tracked-files []
+  ;; stderr is piped, not inherited, so a noisy git (a flaky fsmonitor daemon,
+  ;; for instance) cannot interleave into this report. On failure execSync
+  ;; throws with that stderr attached, and check! prints it.
+  (->> (str (cp/execSync "git ls-files"
+                         #js {:encoding "utf8"
+                              :stdio #js ["ignore" "pipe" "pipe"]}))
+       str/split-lines
+       (remove str/blank?)))
+
+;; ── checks ──────────────────────────────────────────────────────────────────
+
+(defn- check-edn-parses []
+  (doseq [f ["README.edn" "kotodama.edn" "migration.edn"]]
+    (check! (str "edn-parses:" f)
+            #(let [v (edn/read-string (slurp! f))]
+               [(map? v) (str (count v) " top-level keys")]))))
+
+(defn- check-jsonld-parses []
+  (check! "json-parses:PROJECT.jsonld"
+          #(let [v (js/JSON.parse (slurp! "PROJECT.jsonld"))]
+             [(some? (aget v "@id")) (str "@id " (aget v "@id"))])))
+
+(defn- root-commit
+  "The extraction commit — this repository was created by one commit that lifted
+   60-apps/etzhayyim-project-ma out of etzhayyim/root."
+  []
+  (let [roots (->> (str (cp/execSync "git rev-list --max-parents=0 HEAD"
+                                     #js {:encoding "utf8"
+                                          :stdio #js ["ignore" "pipe" "pipe"]}))
+                   str/split-lines
+                   (remove str/blank?))]
+    (if (= 1 (count roots))
+      (first roots)
+      (throw (js/Error. (str "expected exactly one root commit, found "
+                             (count roots) ": " (pr-str roots)))))))
+
+(defn- check-migration-identity
+  "migration.edn claims the extraction from etzhayyim/root was exact. Check the
+   arithmetic rather than trusting the claim.
+
+   Deliberately counted at the extraction commit, not at HEAD: the claim is about
+   what the migration carried across, and later work is allowed to add files. A
+   version of this check that counted HEAD would turn red on the next commit and
+   stay red, which reads as breakage rather than as growth."
+  []
+  (check! "migration-identity"
+          #(let [m         (edn/read-string (slurp! "migration.edn"))
+                 src       (get-in m [:source :tracked-files])
+                 additions (get-in m [:identity :allowed-additions])
+                 expected  (+ src (count additions))
+                 root      (root-commit)
+                 actual    (->> (str (cp/execSync
+                                       (str "git ls-tree -r --name-only " root)
+                                       #js {:encoding "utf8"
+                                            :stdio #js ["ignore" "pipe" "pipe"]}))
+                                str/split-lines (remove str/blank?) count)]
+             [(= expected actual)
+              (str src " source + " (count additions) " allowed additions = "
+                   expected "; extraction commit " (subs root 0 7)
+                   " has " actual)])))
+
+(defn- actor-ids-in [text re]
+  (->> (re-seq re text) (map second) sort vec))
+
+(defn- check-actor-sets-agree
+  "README.md and ui/app.js are the only two files here that describe the same
+   system, so their agreement is the one invariant worth pinning."
+  []
+  (check! "actors-readme-eq-ui"
+          #(let [r (actor-ids-in (slurp! "README.md")  #"`([a-z0-9-]+-v1)`")
+                 u (actor-ids-in (slurp! "ui/app.js") #"'([a-z0-9-]+-v1)'")]
+             [(and (seq r) (= r u))
+              (if (= r u)
+                (str (count r) " ids identical")
+                (str "README " (count r) " vs ui " (count u)
+                     "; only-README " (pr-str (vec (remove (set u) r)))
+                     " only-ui " (pr-str (vec (remove (set r) u)))))])))
+
+(defn- render-ui
+  "Execute the shipped ui/app.js against a stub DOM and return {slot-id html}.
+   This runs the real file — not a copy of its data — so the check fails if the
+   script stops populating a table."
+  []
+  (let [store (atom {})
+        slot  (fn [id]
+                (let [o #js {}]
+                  (js/Object.defineProperty
+                    o "innerHTML" #js {:set (fn [v] (swap! store assoc id v))})
+                  o))
+        doc   #js {:getElementById slot}]
+    (set! (.-document js/globalThis) doc)
+    ((js/Function (slurp! "ui/app.js")))
+    @store))
+
+(defn- check-ui-renders []
+  (let [expected {"pipeline" 9 "actors" 10 "stage-owner" 4}]
+    (check! "ui-renders"
+            #(let [rendered (render-ui)
+                   counts   (into {} (for [[id html] rendered]
+                                       [id (count (re-seq #"<li|<tr" html))]))]
+               [(= counts expected)
+                (str "rows " (pr-str (into (sorted-map) counts))
+                     (when (not= counts expected)
+                       (str " — expected " (pr-str (into (sorted-map) expected)))))]))))
+
+;; ── observations (reported, never scored) ───────────────────────────────────
+
+(defn- observe-report-drift
+  "reports/fundmanager-mcp-readiness.md cannot have been produced by the
+   scripts/evaluate_fundmanager_mcp.py that ships beside it. Two independent
+   signatures. Documented in docs/adr/0001 — measured here so the numbers in
+   that ADR stay checkable."
+  []
+  (observing! "report-drift"
+   (fn []
+    (let [report    (slurp! "reports/fundmanager-mcp-readiness.md")
+          script    (slurp! "scripts/evaluate_fundmanager_mcp.py")
+          emits     (set (map second (re-seq #"evidences\.append\(\"([^\"]+)\"\)" script)))]
+      (observe! "report-evidence-strings"
+                (str "report says 'HTTP /api/mcp' x"
+                     (count (re-seq #"HTTP /api/mcp" report))
+                     "; script can only ever emit " (pr-str (vec (sort emits)))))
+      (observe! "report-path-prefixes"
+                (str "report cites 60-apps/ x" (count (re-seq #"`60-apps/" report))
+                     ", script cites projects/ x" (count (re-seq #"\"projects/" script))))))))
+
+(defn- observe-declared-but-absent []
+  (observing! "declared-absent"
+   (fn []
+  (doseq [p ["wadm" "k8s" "wit" "kotodama.toml" "infra"]]
+    (observe! (str "declared-absent:" p)
+              (str "named by the repository's deploy declarations; present in tree? "
+                   (fs/existsSync p))))
+  (let [by-ext (frequencies (map #(or (second (re-find #"\.([^./]+)$" %)) "(none)")
+                                 (tracked-files)))]
+    (observe! "tracked-extensions" (pr-str (into (sorted-map) by-ext)))))))
+
+;; ── main ────────────────────────────────────────────────────────────────────
+
+;; Keep this equal to the number of check! calls -main makes: 3 EDN + 1 JSON-LD
+;; + migration-identity + actors-readme-eq-ui + ui-renders. If a check stops
+;; being reached, the floor below turns the run into exit 2 rather than a pass.
+(def ^:private expected-checks 7)
+
+(defn -main []
+  (check-edn-parses)
+  (check-jsonld-parses)
+  (check-migration-identity)
+  (check-actor-sets-agree)
+  (check-ui-renders)
+  (println)
+  (observe-report-drift)
+  (observe-declared-but-absent)
+  (println)
+  ;; Evidence floor. A run that executed fewer checks than this file defines has
+  ;; not answered the question, however green the lines above look.
+  (println (str "CHECKS\t" @ran "/" expected-checks))
+  (cond
+    (seq @unknowns)
+    (do (println (str "REFUSING to report a pass — " (count @unknowns)
+                      " check(s) could not run: " (pr-str @unknowns)))
+        (js/process.exit 2))
+
+    (not= @ran expected-checks)
+    (do (println (str "REFUSING to report a pass — ran " @ran
+                      " of " expected-checks " defined checks"))
+        (js/process.exit 2))
+
+    (seq @failures)
+    (do (println (str "FAILED: " (pr-str @failures)))
+        (js/process.exit 1))
+
+    :else
+    (do (println "OK") (js/process.exit 0))))
+
+(-main)
