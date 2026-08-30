@@ -1,0 +1,326 @@
+(ns matching.matchllm
+  "Match-LLM client -- the *contained intelligence node* of the Matching
+  stage.
+
+  It normalizes mandate intake, drafts a counterparty verification
+  verdict, screens one buyer x seller pairing against the jurisdiction's
+  approach rules, ranks a shortlist for a buy-side mandate, and drafts
+  the introduction. CRITICAL: it is a smart-but-untrusted advisor. It
+  returns a *proposal* -- with a rationale and the facts it cited --
+  never a committed record and never an actual introduction. Every output
+  is censored by `matching.governor` before anything touches the SSoT,
+  and an `:introduction/make` proposal NEVER auto-commits at any phase.
+
+  Like every sibling actor's advisor this is a deterministic mock, so the
+  graph runs offline and the governor contract is exercised end to end.
+  `llm-advisor` swaps in a real `langchain.model/ChatModel` behind the
+  same protocol and the same proposal shape.
+
+  THE THREE INJECTED FAILURE MODES. A mock advisor that only ever behaves
+  proves that the happy path compiles and nothing else, so this one can
+  be asked to misbehave in the three ways that matter here. They are
+  request flags, not store state, because the point is that the ADVISOR
+  is the untrusted party:
+
+    :no-spec?   propose a screening for a jurisdiction with no entry in
+                `matching.facts` -- i.e. invent the rules.
+    :leak?      carry the seller's confidential company name into a
+                buyer-facing shortlist entry. This one is the reason the
+                confidentiality gate exists; without it that gate would
+                never have been shown refusing anything.
+    :inflate?   claim a fit score higher than `matching.registry/
+                compute-fit-score` returns.
+
+  Proposal shape (all kinds):
+    {:summary    str          ; human-facing draft / finding
+     :rationale  str          ; why -- SCANNED by the spec-basis gate
+     :cites      [kw|str ..]  ; facts/sources used -- SCANNED too
+     :effect     kw           ; how a commit would mutate the SSoT
+     :value      map          ; the payload -- SCANNED by the leak gate
+     :stake      kw|nil       ; :actuation/make-introduction | nil
+     :confidence 0..1}"
+  (:require #?(:clj  [clojure.edn :as edn]
+               :cljs [cljs.reader :as edn])
+            [clojure.string :as str]
+            [matching.facts :as facts]
+            [matching.registry :as registry]
+            [matching.store :as store]
+            [langchain.model :as model]))
+
+(defn- normalize-intake
+  "Mandate book upsert -- the advisor only normalizes/validates the patch;
+  it does not invent the party, the criteria or the jurisdiction. High
+  confidence, low stakes."
+  [_db {:keys [patch]}]
+  {:summary    (str "マンデート更新: " (pr-str (sort (keys patch))))
+   :rationale  "入力 patch の正規化のみ。新規事実の生成なし。"
+   :cites      (vec (sort (map str (keys patch))))
+   :effect     :mandate/upsert
+   :value      patch
+   :stake      nil
+   :confidence 0.97})
+
+(defn- verify-counterparty
+  "Counterparty verification draft. The advisor reports what the mandate
+  book says about the party; it never upgrades an unknown party to
+  verified on its own reading."
+  [db {:keys [subject]}]
+  (let [m (store/mandate db subject)]
+    (if (nil? m)
+      {:summary    (str subject " というマンデートは登録されていない")
+       :rationale  "no mandate record"
+       :cites      []
+       :effect     :verification/set
+       :value      {:mandate-id subject :verdict :unknown}
+       :stake      nil
+       :confidence 0.0}
+      (let [sb (facts/spec-basis (:jurisdiction m))]
+        {:summary    (str (:id m) " (" (:jurisdiction m) ") の本人確認記録を提案")
+         :rationale  (if sb
+                       (str "公式ソース: " (:provenance sb) " / 法的根拠: " (:legal-basis sb))
+                       "法域の公式spec-basisが未登録。要件を推測で作らない。")
+         :cites      (if sb [(:legal-basis sb) (:provenance sb)] [])
+         :effect     :verification/set
+         :value      {:mandate-id subject
+                      :verdict (if sb :verified :unknown)
+                      :basis (facts/evidence-checklist (:jurisdiction m))}
+         :stake      nil
+         :confidence (if sb 0.9 0.3)}))))
+
+(defn- screen-pairing
+  "Pairing eligibility screening draft for one (buy-side, sell-side)
+  pairing. `:no-spec?` injects the failure mode the governor must defend
+  against: proposing a screening under a jurisdiction that has NO entry
+  in `matching.facts`.
+
+  The verdict this returns is the advisor's READING; the governor
+  re-derives NDA, consent, verification and conflict independently. A
+  `:blocked` verdict here HARD-holds on its own finding, the same way a
+  sibling's `:conflict/screen` does -- so the screening op can stop a
+  pairing without an actuation op ever being attempted."
+  [db {:keys [buy-side-id sell-side-id no-spec?]}]
+  (let [b (store/mandate db buy-side-id)
+        sell (store/mandate db sell-side-id)
+        pid (registry/pairing-id buy-side-id sell-side-id)
+        iso3 (if no-spec? "ATL" (:jurisdiction sell))
+        sb (facts/spec-basis iso3)]
+    (cond
+      (or (nil? b) (nil? sell))
+      {:summary "対象マンデートが見つかりません" :rationale "no mandate record"
+       :cites [] :effect :screening/set
+       :value {:pairing-id pid :verdict :unknown} :stake nil :confidence 0.0}
+
+      (nil? sb)
+      {:summary    (str iso3 " の公式spec-basisが見つかりません")
+       :rationale  "matching.facts に未登録の法域。開示要件を推測で作らない。"
+       :cites      []
+       :effect     :screening/set
+       :value      {:pairing-id pid :jurisdiction iso3 :verdict :unknown :spec-basis nil}
+       :stake      nil
+       :confidence 0.9}
+
+      (:conflict-hit? sell)
+      {:summary    (str pid ": 利益相反を検出")
+       :rationale  "売り手側に未開示の利益相反。人手確認とホールドが必須。"
+       :cites      [:conflict-check (:provenance sb)]
+       :effect     :screening/set
+       :value      {:pairing-id pid :jurisdiction iso3 :verdict :blocked
+                    :reason :conflict-of-interest :spec-basis (:provenance sb)}
+       :stake      nil
+       :confidence 0.95}
+
+      :else
+      {:summary    (str pid ": 適合。fit " (registry/compute-fit-score b sell) "/100")
+       :rationale  (str "公式ソース: " (:provenance sb) " / 法的根拠: " (:legal-basis sb)
+                        " / 充足条件: " (pr-str (registry/met-criteria b sell)))
+       :cites      [(:legal-basis sb) (:provenance sb)]
+       :effect     :screening/set
+       :value      {:pairing-id pid :jurisdiction iso3 :verdict :eligible
+                    :checklist (:required-evidence sb)
+                    :spec-basis (:provenance sb)
+                    :met (registry/met-criteria b sell)}
+       :stake      nil
+       :confidence 0.88})))
+
+(defn- entry-for
+  "One shortlist row. The teaser is `registry/blind-teaser`, which is a
+  whitelist -- so a new sell-side field cannot reach a buyer by being
+  forgotten. `:leak?` deliberately defeats that by merging the seller's
+  confidential name back in, which is exactly what the governor's
+  confidentiality gate must catch."
+  [b sell leak? inflate?]
+  (let [score (registry/compute-fit-score b sell)]
+    (cond-> {:sell-side-id (:id sell)
+             :fit-score (if inflate? (min 100 (+ score 25)) score)
+             :teaser (registry/blind-teaser sell)}
+      leak? (assoc-in [:teaser :company-name] (:company-name sell)))))
+
+(defn- rank-shortlist
+  "Ranked shortlist draft for a buy-side mandate. Ranks every sell-side
+  mandate in the book by fit score, descending, id-ascending as the
+  tiebreak so the output is deterministic.
+
+  The shortlist is INTERNAL to the intermediary: the rows carry blind
+  teasers, not names. Naming a target to a buyer is `:introduction/make`,
+  which is a separate op with a separate gate."
+  [db {:keys [subject leak? inflate?]}]
+  (let [b (store/mandate db subject)]
+    (if (nil? b)
+      {:summary (str subject " というマンデートは登録されていない") :rationale "no mandate record"
+       :cites [] :effect :shortlist/set
+       :value {:mandate-id subject :entries []} :stake nil :confidence 0.0}
+      (let [entries (->> (store/mandates-on db :sell)
+                         (map #(entry-for b % leak? inflate?))
+                         (sort-by (juxt #(- (:fit-score %)) :sell-side-id))
+                         vec)]
+        {:summary    (str subject " 向けショートリスト " (count entries) " 件")
+         :rationale  (str "matching.registry/compute-fit-score による重み付き適合判定 ("
+                          (pr-str (into (sorted-map) registry/criteria-weights)) ")")
+         :cites      [:fit-score :blind-teaser]
+         :effect     :shortlist/set
+         :value      {:mandate-id subject :entries entries}
+         :stake      nil
+         :confidence 0.85}))))
+
+(defn- draft-introduction
+  "Introduction draft -- the ONE real-world act of this stage: telling a
+  named buyer that a named seller is for sale. Always `:stake
+  :actuation/make-introduction`, so it escalates to a human at every
+  phase even when the governor is clean."
+  [db {:keys [buy-side-id sell-side-id]}]
+  (let [b (store/mandate db buy-side-id)
+        sell (store/mandate db sell-side-id)
+        pid (registry/pairing-id buy-side-id sell-side-id)
+        screening (store/screening-of db pid)
+        eligible? (= :eligible (:verdict screening))
+        score (when (and b sell) (registry/compute-fit-score b sell))]
+    {:summary    (str pid " の引き合わせを提案 (fit " score "/100)")
+     :rationale  (if eligible?
+                   (str "screening 済み: " (:spec-basis screening))
+                   "screening が未了、または適合していない。")
+     :cites      (if eligible? [(:spec-basis screening) :nda :consent] [])
+     :effect     :introduction/record
+     :value      {:pairing-id pid :buy-side-id buy-side-id :sell-side-id sell-side-id
+                  :fit-score score}
+     :stake      :actuation/make-introduction
+     :confidence (if eligible? 0.9 0.3)}))
+
+(defn- explain-pairing
+  "READ op. Returns why a pairing scores what it scores and writes
+  nothing -- `:effect :noop`. A buyer asking 'why was I shown this' is a
+  real question with a real answer, and answering it must not be a
+  mutation."
+  [db {:keys [buy-side-id sell-side-id]}]
+  (let [b (store/mandate db buy-side-id)
+        sell (store/mandate db sell-side-id)]
+    (if (or (nil? b) (nil? sell))
+      {:summary "対象マンデートが見つかりません" :rationale "no mandate record"
+       :cites [] :effect :noop :value {} :stake nil :confidence 0.0}
+      {:summary    (str (registry/pairing-id buy-side-id sell-side-id) " fit "
+                        (registry/compute-fit-score b sell) "/100")
+       :rationale  (str "充足: " (pr-str (registry/met-criteria b sell))
+                        " / 重み: " (pr-str (into (sorted-map) registry/criteria-weights)))
+       :cites      [:fit-score]
+       :effect     :noop
+       :value      {:met (registry/met-criteria b sell)
+                    :fit-score (registry/compute-fit-score b sell)}
+       :stake      nil
+       :confidence 0.99})))
+
+(defn infer
+  "Route a request to the right proposal generator.
+  request: {:op kw :subject id ...op-specific...}"
+  [db {:keys [op] :as request}]
+  (case op
+    :mandate/intake      (normalize-intake db request)
+    :counterparty/verify (verify-counterparty db request)
+    :pairing/screen      (screen-pairing db request)
+    :shortlist/rank      (rank-shortlist db request)
+    :introduction/make   (draft-introduction db request)
+    :pairing/explain     (explain-pairing db request)
+    {:summary "未対応の操作" :rationale (str op) :cites []
+     :effect :noop :value {} :stake nil :confidence 0.0}))
+
+;; ----------------------------- Advisor protocol -----------------------------
+
+(defprotocol Advisor
+  (-advise [advisor store request] "store + request -> proposal map"))
+
+(defn mock-advisor
+  "The deterministic advisor (the `infer` logic above). Default
+  everywhere."
+  []
+  (reify Advisor (-advise [_ st req] (infer st req))))
+
+(def ^:private system-prompt
+  (str "あなたはM&A仲介のマッチング担当エージェントの助言者です。"
+       "与えられた事実のみに基づき、提案を1つだけEDNマップで返します。説明や前置きは"
+       "一切書かず、EDNだけを出力します。\n"
+       "キー: :summary(人向けドラフト) :rationale(根拠/必ず事実から) "
+       ":cites(使った事実キーのベクタ) "
+       ":effect(:mandate/upsert|:verification/set|:screening/set|:shortlist/set|"
+       ":introduction/record|:noop) "
+       ":value(ペイロード) :stake(:actuation/make-introduction か nil) :confidence(0..1)。\n"
+       "重要1: 登録されていない法域の開示要件を絶対に創作してはいけません。"
+       "spec-basisが無い場合は :cites を空にし confidence を上げないこと。\n"
+       "重要2: 買い手向けの :value に売り手の非公開情報(会社名・所在地・担当者名・"
+       "登記番号など)を絶対に含めてはいけません。NDA前に出せるのは匿名teaserだけです。"))
+
+(defn- facts-for [st {:keys [op subject buy-side-id sell-side-id]}]
+  (case op
+    :counterparty/verify {:mandate (store/mandate st subject)}
+    (:pairing/screen :introduction/make :pairing/explain)
+    {:buy-side (store/mandate st buy-side-id)
+     ;; The seller's own record is given to the model in blind form.
+     ;; Withholding it here is not the security control -- the governor
+     ;; is -- but handing a model the name and then gating the output is
+     ;; a strictly worse arrangement than not handing it over at all.
+     :sell-side (some-> (store/mandate st sell-side-id) registry/blind-teaser)}
+    :shortlist/rank {:buy-side (store/mandate st subject)
+                     :sell-side (mapv registry/blind-teaser (store/mandates-on st :sell))}
+    {:mandate (store/mandate st subject)}))
+
+(defn- parse-proposal
+  "Parse the model's EDN proposal defensively. Any parse/shape failure
+  yields a safe low-confidence noop so the Matching Governor
+  escalates/holds -- a model hiccup can never introduce anyone."
+  [content]
+  (let [p (try (edn/read-string (str/trim (str content)))
+               (catch #?(:clj Exception :cljs :default) _ nil))]
+    (if (map? p)
+      (-> p
+          (update :cites #(vec (or % [])))
+          (update :confidence #(if (number? %) (double %) 0.0))
+          (update :effect #(or % :noop))
+          (update :value #(or % {})))
+      {:summary "LLM応答を解釈できませんでした" :rationale (str content)
+       :cites [] :effect :noop :value {} :stake nil :confidence 0.0})))
+
+(defn llm-advisor
+  "An advisor backed by a `langchain.model/ChatModel` (real inference)."
+  ([chat-model] (llm-advisor chat-model {}))
+  ([chat-model gen-opts]
+   (reify Advisor
+     (-advise [_ st req]
+       (let [msgs [{:role :system :content system-prompt}
+                   {:role :user :content (str "操作: " (:op req)
+                                              "\n対象: " (:subject req)
+                                              "\n事実: " (pr-str (facts-for st req)))}]
+             resp (model/-generate chat-model msgs gen-opts)]
+         (parse-proposal (:content resp)))))))
+
+(defn trace
+  "Decision-grounded audit record -- persisted to the :audit channel.
+
+  Deliberately does NOT copy `:value`. The audit ledger is read by more
+  people than the store is, and a proposal that was HELD for leaking a
+  seller's name must not leak it a second time by being written into the
+  record of its own rejection."
+  [request proposal]
+  {:t          :matchllm-proposal
+   :op         (:op request)
+   :subject    (:subject request)
+   :summary    (:summary proposal)
+   :rationale  (:rationale proposal)
+   :cites      (:cites proposal)
+   :confidence (:confidence proposal)})

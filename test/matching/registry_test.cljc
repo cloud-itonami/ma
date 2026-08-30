@@ -1,0 +1,105 @@
+(ns matching.registry-test
+  "The pure core as executable tests. Two things here are load-bearing for
+  the governor and get the most attention: `compute-fit-score` must be
+  exactly reproducible, and `leaking-nodes` must not miss a nested leak or
+  guess at whose it is."
+  (:require [clojure.test :refer [deftest is testing]]
+            [matching.registry :as r]))
+
+(def buyer {:id "b" :side :buy
+            :target-industries #{:precision-machinery}
+            :target-geographies #{"JPN"}
+            :accepted-deal-types #{:majority}
+            :size-min 500 :size-max 1500})
+
+(def seller {:id "s" :side :sell :industry :precision-machinery :geography "JPN"
+             :deal-type :majority :revenue 850 :company-name "秘密"})
+
+(deftest weights-sum-to-100
+  (testing "so a score reads as a percentage with no division at compare time"
+    (is (= 100 (reduce + (vals r/criteria-weights))))))
+
+(deftest fit-score-is-exact
+  (is (= 100 (r/compute-fit-score buyer seller)))
+  (is (= [:deal-type :geography :industry :size] (r/met-criteria buyer seller)))
+  (testing "one criterion missed removes exactly its weight"
+    (is (= 60 (r/compute-fit-score buyer (assoc seller :industry :saas))))
+    (is (= 70 (r/compute-fit-score buyer (assoc seller :revenue 9999))))
+    (is (= 80 (r/compute-fit-score buyer (assoc seller :geography "USA"))))
+    (is (= 90 (r/compute-fit-score buyer (assoc seller :deal-type :minority)))))
+  (testing "nothing in common scores zero, and does not throw"
+    (is (= 0 (r/compute-fit-score buyer {:id "x"})))
+    (is (= 0 (r/compute-fit-score {} {})))))
+
+(deftest size-band-is-inclusive-at-both-ends
+  (is (= 100 (r/compute-fit-score buyer (assoc seller :revenue 500))))
+  (is (= 100 (r/compute-fit-score buyer (assoc seller :revenue 1500))))
+  (is (= 70 (r/compute-fit-score buyer (assoc seller :revenue 499))))
+  (is (= 70 (r/compute-fit-score buyer (assoc seller :revenue 1501))))
+  (testing "a non-numeric revenue fails the criterion rather than throwing"
+    (is (= 70 (r/compute-fit-score buyer (assoc seller :revenue nil))))))
+
+(deftest blind-teaser-is-a-whitelist
+  (let [t (r/blind-teaser (assoc seller :address "東京都" :some-new-field "surprise"))]
+    (testing "every confidential field is dropped"
+      (doseq [k r/confidential-fields] (is (not (contains? t k)) (str k " survived"))))
+    (testing "a field the whitelist has never heard of does not reach the buyer"
+      (is (not (contains? t :some-new-field))))
+    (testing "the screening attributes do survive, or the teaser is useless"
+      (is (= :precision-machinery (:industry t)))
+      (is (= 850 (:revenue t)))
+      (is (true? (:anonymised t))))))
+
+(deftest leaking-nodes-walks-nested-values
+  (testing "a leak one level down is still a leak"
+    (is (= [{:fields [:company-name] :named-id "s"}]
+           (r/leaking-nodes {:mandate-id "b"
+                             :entries [{:sell-side-id "s"
+                                        :teaser {:company-name "秘密"}}]}))))
+  (testing "the id is inherited from the enclosing map that named one"
+    (is (= "s" (:named-id (first (r/leaking-nodes
+                                  {:entries [{:sell-side-id "s"
+                                              :teaser {:owner-name "誰か"}}]}))))))
+  (testing "an unattributable leak reports nil rather than being skipped"
+    (is (= [{:fields [:company-name] :named-id nil}]
+           (r/leaking-nodes {:entries [{:company-name "秘密"}]}))))
+  (testing "a clean value has no leaking nodes"
+    (is (= [] (r/leaking-nodes {:mandate-id "b"
+                                :entries [{:sell-side-id "s"
+                                           :teaser (r/blind-teaser seller)}]})))
+    (is (= [] (r/confidential-leak {:a 1 :b [:c "d"]})))))
+
+(deftest pairing-id-is-a-pure-function-of-two-ids
+  (is (= "b~s" (r/pairing-id "b" "s")))
+  (is (not= (r/pairing-id "b" "s") (r/pairing-id "s" "b"))))
+
+(deftest register-introduction-validates
+  (testing "the record is built, not sent"
+    (let [res (r/register-introduction "b" "s" 100 "JPN" 0)]
+      (is (= "JPN-INT-000000" (get res "introduction_number")))
+      (is (= "b~s" (get-in res ["record" "pairing_id"])))
+      (is (= 100 (get-in res ["record" "fit_score"])))
+      (is (true? (get-in res ["record" "immutable"])))
+      (testing "every certificate this actor produces is unsigned"
+        (is (nil? (get-in res ["certificate" "proof"])))
+        (is (false? (get-in res ["certificate" "issued_by_registry"])))
+        (is (= "draft-unsigned" (get-in res ["certificate" "status"]))))))
+  (testing "sequences zero-pad so the record ids sort lexically"
+    (is (= "JPN-INT-000042" (get (r/register-introduction "b" "s" 0 "jpn" 42)
+                                 "introduction_number"))))
+  (testing "bad input throws rather than producing a plausible record"
+    (doseq [args [["" "s" 100 "JPN" 0]
+                  ["b" "" 100 "JPN" 0]
+                  ["b" "s" 101 "JPN" 0]
+                  ["b" "s" -1 "JPN" 0]
+                  ["b" "s" 100 "" 0]
+                  ["b" "s" 100 "JPN" -1]]]
+      (is (thrown? #?(:clj Exception :cljs js/Error)
+                   (apply r/register-introduction args))
+          (str "should have thrown for " (pr-str args))))))
+
+(deftest append-never-mutates-history
+  (let [h [{"record_id" "a"}]
+        res {"record" {"record_id" "b"}}]
+    (is (= 2 (count (r/append h res))))
+    (is (= 1 (count h)))))

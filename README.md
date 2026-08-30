@@ -1,21 +1,37 @@
 # ma
 
-**A design sketch for a global M&A brokerage service, expressed as actors mapped
-onto APQC (process), ISCO (occupation), and ISIC (industry) — plus a static
-dashboard that draws that mapping.**
+**One implemented actor — the Matching stage of an M&A deal pipeline — plus a
+design sketch for the eight stages around it, expressed as actors mapped onto
+APQC (process), ISCO (occupation) and ISIC (industry), and a static dashboard
+that draws that mapping.**
 
-There is no runtime in this repository. No actor is implemented, deployed, or
-callable. What is here is a UI that renders the intended actor map, the
-declaration files that describe the intended system, and a verifier that keeps
-the two honest about which is which.
+Read the two halves of that sentence separately, because the difference is the
+whole point of this repository.
+
+**Implemented and callable:** `src/matching/` is a governed actor for the
+Matching stage — the act of deciding which buyer is shown which seller, and
+disclosing it. It has a store, an advisor, an independent governor with seven
+un-overridable rules, a staged rollout gate, a langgraph-clj StateGraph, and 264
+assertions across 6 namespaces that run on both nbb and the JVM.
+
+**Declared but not implemented:** everything else. The ten actor names below are
+UI data, not endpoints. The deployment layer, the k8s langserver, the BPMN
+processes and the second (fund-management) actor set are all still declarations
+with nothing behind them, exactly as
+[docs/adr/0001](docs/adr/0001-what-this-repository-actually-contains.md) found
+them.
 
 If you are trying to run something, start with
-[docs/operator-quickstart.md](docs/operator-quickstart.md). If you are trying to
-understand why this repository claims more than it contains, read
-[docs/adr/0001](docs/adr/0001-what-this-repository-actually-contains.md).
+[docs/operator-quickstart.md](docs/operator-quickstart.md).
 
 ```bash
-nbb scripts/verify-repo-claims.cljs   # 7 checks; 0 = pass, 1 = fail, 2 = could not answer
+# the actor: 53 tests, 264 assertions (0 = pass, 1 = fail, 2 = could not answer)
+nbb --classpath "src:test:../../kotoba-lang/langgraph/src:../../kotoba-lang/langchain/src" \
+    test/run_tests.cljs
+
+# the repository's own claims: 7 checks (0 = pass, 1 = fail, 2 = could not answer)
+nbb scripts/verify-repo-claims.cljs
+
 cd ui && python3 -m http.server 8731  # then open http://127.0.0.1:8731/index.html
 ```
 
@@ -23,7 +39,43 @@ cd ui && python3 -m http.server 8731  # then open http://127.0.0.1:8731/index.ht
 
 ## What is actually here
 
-Fifteen files, one commit, extracted whole from `etzhayyim/root`.
+The files carried across from `etzhayyim/root` by the extraction commit, plus
+the Matching actor added since.
+
+### `src/matching/` — the Matching stage, implemented
+
+The one stage of the nine-stage pipeline that this repository owns. What an M&A
+matching service actually sells is the pairing of a buyer with a seller; the
+advice around it belongs to the sibling actors in `cloud-itonami`. So that is
+what is implemented here, and nothing else is.
+
+| namespace | what it holds |
+|---|---|
+| `matching.registry` | the pure core — fit score, blind teaser, introduction record |
+| `matching.facts` | four jurisdictions' approach/confidentiality rules, each with a real citation |
+| `matching.store` | `Store` protocol + `MemStore`; append-only ledger |
+| `matching.matchllm` | the contained advisor (deterministic mock, or a real `ChatModel`) |
+| `matching.governor` | the independent censor — eight checks, seven of them HARD |
+| `matching.phase` | the 0→3 rollout gate |
+| `matching.operation` | the langgraph-clj StateGraph that binds them |
+| `matching.sim` | a demo driver that walks one clean deal and seven refusals |
+
+**The invariant.** An introduction — telling a named buyer that a named seller is
+for sale — never auto-commits, at any phase. Once a competitor knows a company is
+for sale, no later approval un-knows it. Two independent layers enforce this:
+`matching.governor`'s high-stakes set, and `matching.phase`'s auto table. Each
+was removed in turn during testing and the other held the line on its own.
+
+**The gate that matters most.** A seller's confidential fields may not reach a
+buyer without an executed NDA for that exact pairing. The check walks nested
+values, is decided from the data rather than from the op name, and fails closed
+when it cannot tell whose secret it is. `matching.matchllm` can be asked to leak
+on purpose (`:leak?`), so that gate has been shown refusing and permitting the
+same field for different pairings.
+
+Run the demo: `nbb --classpath "src:../../kotoba-lang/langgraph/src:../../kotoba-lang/langchain/src" -e "(require '[matching.sim :as s]) (s/-main)"`,
+or `clojure -M:dev:run` from inside the monorepo checkout.
+
 
 ### `ui/` — a working static dashboard
 
@@ -37,7 +89,9 @@ three hardcoded tables and writes them into `ui/index.html`:
 
 ### The ten M&A actors it names
 
-These are names in a design, not endpoints. Nothing here serves them.
+These are names in a design, not endpoints. Nothing here serves them — including
+the buyer-matching row. `src/matching/` implements the Matching *stage*; it does
+not implement, expose or answer for any of the ten identifiers below.
 
 | layer | actor | role |
 |---|---|---|
@@ -116,6 +170,9 @@ about a different checkout. Details in
 ## Layout
 
 ```
+src/matching/    the Matching-stage actor — implemented, tested, governed
+test/matching/   the portable .cljc suite; test/run_tests.cljs is the nbb runner
+deps.edn         nbb is the primary gate, clojure -M:dev:test the compat one
 ui/              static dashboard — index.html, app.js, styles.css
 scripts/         verify-repo-claims.cljs (current) + two legacy scripts (do not run)
 docs/            operator-quickstart.md, adr/
@@ -123,6 +180,24 @@ appview/         fork-manifest.yaml — intended forks, not performed here
 reports/         fundmanager-mcp-readiness.md — not reproducible; see ADR 0001
 *.edn, *.jsonld  declarations and provenance
 ```
+
+## Where this sits in the deal pipeline
+
+The nine stages the dashboard draws are owned by nine different repositories.
+Only this one is here; the composition is written down in the superproject's
+`manifest/ma-business.edn`, because no single repository can see it.
+
+| stage | owner |
+|---|---|
+| Sales | `cloud-itonami-isco-2412` |
+| Marketing | `cloud-itonami-isco-1221` |
+| Screening | `cloud-itonami-isic-6612` |
+| **Matching** | **this repository, `src/matching/`** |
+| Diligence | `cloud-itonami-isic-6612` |
+| Valuation | `cloud-itonami-isco-2412` |
+| Negotiation | `cloud-itonami-isco-3324` |
+| Closing | `cloud-itonami-isic-6910` (registration side only; escrow has no owner) |
+| PMI | `cloud-itonami-isic-7020` |
 
 ## Licence
 

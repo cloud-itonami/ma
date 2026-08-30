@@ -1,0 +1,69 @@
+(ns run-tests
+  "PRIMARY automated gate for the Matching actor, under nbb.
+
+  The runtime-priority rule in the superproject CLAUDE.md puts nbb above
+  the JVM, and the whole suite is portable `.cljc`, so it runs unchanged
+  here and under `clojure -M:dev:test`.
+
+  From the repo root, inside the monorepo checkout:
+
+    nbb --classpath \"src:test:../../kotoba-lang/langgraph/src:../../kotoba-lang/langchain/src\" \\
+        test/run_tests.cljs
+
+  Exit code: 0 all passed, 1 something failed, 2 the run could not be
+  trusted.
+
+  TWO HAZARDS THIS FILE EXISTS TO CLOSE.
+
+  First, `run-tests` under a ClojureScript host does not set an exit code.
+  Without the `:end-run-tests` method below, a suite with failing
+  assertions prints `FAIL` and exits 0 -- and a caller that only reads the
+  exit code cannot tell that from a clean run. Both directions were
+  measured before this file was committed.
+
+  Second, and worse, a run that loaded no namespace also exits 0. A typo
+  in a `:require`, a renamed namespace, a classpath that resolves to
+  nothing -- each of those produces a run that measured nothing and
+  reports it the same way a run that measured everything and found no
+  problem does. `min-assertions` is the floor against that: a run that
+  makes fewer assertions than the suite is known to contain refuses to
+  report a pass, and exits 2 rather than 0 or 1, because 'I could not
+  answer' is a third answer."
+  (:require [clojure.test :as t]
+            [matching.facts-test]
+            [matching.registry-test]
+            [matching.phase-test]
+            [matching.governor-contract-test]
+            [matching.store-contract-test]
+            [matching.operation-test]))
+
+(def namespaces
+  ['matching.facts-test
+   'matching.registry-test
+   'matching.phase-test
+   'matching.governor-contract-test
+   'matching.store-contract-test
+   'matching.operation-test])
+
+(def min-assertions
+  "Evidence floor. Raise it when the suite grows; never lower it to make a
+  run green. Measured 2026-08-31 at 264 assertions across 6 namespaces."
+  240)
+
+(defmethod t/report [:cljs.test/default :end-run-tests] [m]
+  (let [ran (+ (:pass m 0) (:fail m 0) (:error m 0))]
+    (println (str "\nASSERTIONS\t" ran "\tNAMESPACES\t" (count namespaces)))
+    (cond
+      (< ran min-assertions)
+      (do (println (str "REFUSING to report a result: only " ran " assertions ran, "
+                        "floor is " min-assertions
+                        ". A run that measured nothing must not look clean."))
+          (set! (.-exitCode js/process) 2))
+
+      (not (t/successful? m))
+      (set! (.-exitCode js/process) 1)
+
+      :else
+      (println "OK"))))
+
+(apply t/run-tests namespaces)
