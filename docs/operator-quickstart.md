@@ -1,13 +1,16 @@
 # Operator quickstart
 
-Everything below was executed against commit `7295214` on 2026-08-21 and the output
-is pasted verbatim. If a step does not reproduce for you, that is a bug in this
-document — please fix it rather than working around it.
+Everything below was executed and the output is pasted verbatim. If a step does
+not reproduce for you, that is a bug in this document — please fix it rather than
+working around it.
 
-Tooling this was run with: `nbb v1.4.210`, `node v26.3.0`, `git 2.51.0`.
-Serving the UI additionally used `python3 3.14.5`, but any static file server works.
+Steps 1–3 and 5–7 were run against commit `7295214` on 2026-08-21 with
+`nbb v1.4.210`, `node v26.3.0`, `git 2.51.0`. **Step 4** was added on 2026-08-31
+against the tree that introduced `src/matching/`, with `nbb v1.5.212`,
+`node v26.7.0`, `git 2.51.0`. Serving the UI additionally used `python3 3.14.5`,
+but any static file server works.
 
-**Read [§5](#5-what-this-repository-cannot-do) before you run anything under
+**Read [§6](#6-what-this-repository-cannot-do) before you run anything under
 `scripts/`.** Two of the three scripts in this repository resolve paths *outside*
 it, and one of them deletes directories.
 
@@ -94,19 +97,102 @@ Open <http://127.0.0.1:8731/index.html>. The page renders three tables from data
 hardcoded in `ui/app.js`: a 9-stage deal pipeline, a 10-row actor mapping, and a
 4-row stage-ownership table. It reads no network and calls no backend.
 
-## 4. What you are looking at
+## 4. Run the Matching actor
+
+`src/matching/` is the one implemented part of this repository. It needs
+`langgraph-clj` and `langchain-clj`, which live in the `com-junkawasaki`
+superproject — so the classpath below resolves only from inside the west
+checkout at `orgs/cloud-itonami/ma`. A standalone clone must point the two
+`../../kotoba-lang/...` paths at its own copies.
+
+```bash
+nbb --classpath "src:test:../../kotoba-lang/langgraph/src:../../kotoba-lang/langchain/src" \
+    test/run_tests.cljs
+```
+
+```
+Testing matching.facts-test
+
+Testing matching.registry-test
+
+Testing matching.phase-test
+
+Testing matching.governor-contract-test
+
+Testing matching.store-contract-test
+
+Testing matching.operation-test
+
+Ran 53 tests containing 264 assertions.
+0 failures, 0 errors.
+
+ASSERTIONS	264	NAMESPACES	6
+OK
+```
+
+The exit code is three-valued for the same reason step 2's is, and for one more:
+
+| exit | meaning |
+|---|---|
+| `0` | every assertion ran and passed |
+| `1` | an assertion failed |
+| `2` | fewer assertions ran than the suite is known to contain — the run measured too little to be trusted, which is neither a pass nor a failure |
+
+That third case is not decoration. Under a ClojureScript host `run-tests` sets no
+exit code at all, so without `test/run_tests.cljs`'s `:end-run-tests` method a
+failing suite prints `FAIL` and exits `0`; and a run whose `:require` list broke
+loads nothing, asserts nothing, and exits `0` in exactly the same way a clean run
+does. Both were measured before this was committed:
+
+| mutation | result |
+|---|---|
+| add `:introduction/make` to phase 3's `:auto` set | 2 failures, exit `1` |
+| raise `min-assertions` above the real count | `REFUSING to report a result`, exit `2` |
+| delete the confidentiality check from the governor | 10 failures, exit `1` — and every one of them in a confidentiality test |
+| empty the governor's `high-stakes` set | 3 failures, exit `1`; the end-to-end introduction test stayed green, because `matching.phase` held the line on its own |
+| *(unmutated)* | `264` assertions, `OK`, exit `0` |
+
+The last two rows are the point of having two layers. Removing either one is
+caught, and neither one alone is what stops an introduction from committing
+unattended.
+
+The same suite is portable `.cljc` and runs unchanged on the JVM
+(`clojure -M:dev:test` from inside the monorepo checkout) — `Ran 53 tests
+containing 264 assertions. 0 failures, 0 errors.` nbb is the primary gate and the
+JVM the compat one, following the runtime-priority rule in the superproject's
+`CLAUDE.md`.
+
+To watch one deal walk the pipeline, plus the seven refusals:
+
+```bash
+nbb --classpath "src:../../kotoba-lang/langgraph/src:../../kotoba-lang/langchain/src" \
+    -e "(require '[matching.sim :as s]) (s/-main)"
+```
+
+It prints a clean pairing committing through mandate intake, counterparty
+verification, screening, shortlist and a human-approved introduction, and then
+seven HARD holds — one per rule, each isolated so that the hold it produces names
+exactly the rule the line above it claims to be demonstrating.
+
+## 5. What you are looking at in the UI
 
 The UI is a **static picture of an intended design**. The ten actor IDs it lists
 (`svc-apqc-3-2-2-ma-sales-origination-v1` and so on) are names, not endpoints —
-nothing in this repository implements, deploys, or contacts them.
+nothing in this repository implements, deploys, or contacts them. That includes
+the buyer-matching row: `src/matching/` implements the Matching *stage*, and does
+not answer for any of the ten identifiers.
 
-## 5. What this repository cannot do
+## 6. What this repository cannot do
 
 This section exists because four of the checked-in documents describe systems that
 are not present. Details and evidence are in
 [docs/adr/0001](adr/0001-what-this-repository-actually-contains.md).
 
-### There is no runtime here
+### The ten named actors are still not implemented
+
+`src/matching/` is a runtime, and it is the only one. It is not any of the ten
+identifiers in the actor table: it implements the Matching stage of the pipeline,
+serves no HTTP, and exposes no MCP tool.
 
 ```
 $ git ls-files '*.wasm' '*.go' '*.toml' | wc -l
@@ -180,13 +266,17 @@ historical note about a different checkout, not as a current measurement.
 nine **fund management** actors. The two sets share zero members. Step 2 pins the
 first pair; the second group is unverified design material.
 
-## 6. Where to make changes
+## 7. Where to make changes
 
 | you want to change | edit |
 |---|---|
 | the pipeline, actor list, or stage table shown in the UI | `ui/app.js` (then rerun step 2 — `ui-renders` and `actors-readme-eq-ui` both cover it) |
 | the actor names in prose | `README.md` **and** `ui/app.js` together; step 2 fails if they diverge |
 | what step 2 checks | `scripts/verify-repo-claims.cljs`; keep `expected-checks` equal to the number of `check!` calls, or the run exits 2 |
+| the Matching actor's rules | `src/matching/governor.cljc` — and add the paired case to `test/matching/governor_contract_test.cljc`, asserting the rule name rather than only that something was held |
+| which jurisdictions can be screened | `src/matching/facts.cljc`; cite a real source, never invent one |
+| what a buyer may see pre-NDA | `src/matching/registry.cljc`'s `confidential-fields` / `blind-teaser` — one definition, read by both the advisor and the governor |
+| the rollout gate | `src/matching/phase.cljc`; `:introduction/make` must stay out of every `:auto` set |
 
-Anything involving actual actors, MCP endpoints, or deployment is open work, not a
-change to an existing implementation. See docs/adr/0001.
+MCP endpoints and deployment are open work, not changes to an existing
+implementation. See docs/adr/0001 and docs/adr/0002.

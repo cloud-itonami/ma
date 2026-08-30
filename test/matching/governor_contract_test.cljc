@@ -1,0 +1,273 @@
+(ns matching.governor-contract-test
+  "The Matching Governor as executable tests.
+
+  Every negative case below asserts the RULE, not merely that something
+  was held. A test that only checks `:hard?` counts a hold for the wrong
+  reason as a success, and this governor has eight rules that can all fire
+  on the same request -- an unscreened introduction against an unverified
+  buyer trips four of them at once. Pinning `(mapv :rule violations)`
+  is what makes each case evidence about the rule it names.
+
+  Every negative case is also paired with the control that must stay
+  clean, because a gate that refuses everything is not a gate."
+  (:require [clojure.test :refer [deftest is testing]]
+            [matching.facts :as facts]
+            [matching.governor :as gov]
+            [matching.matchllm :as matchllm]
+            [matching.registry :as r]
+            [matching.store :as store]))
+
+(def ctx {:actor-id "op-1" :phase 3})
+
+(defn- rules [verdict] (mapv :rule (:violations verdict)))
+
+(defn- screened!
+  "Commit an `:eligible` screening for a pairing, so a later introduction
+  is judged on the rule under test rather than on missing screening."
+  [db buy-id sell-id]
+  (let [pid (r/pairing-id buy-id sell-id)
+        jur (:jurisdiction (store/mandate db sell-id))]
+    (store/commit-record!
+     db {:effect :screening/set :path [pid]
+         :payload {:pairing-id pid :jurisdiction jur :verdict :eligible
+                   :checklist (facts/evidence-checklist jur)
+                   :spec-basis "https://example.invalid/"}})
+    pid))
+
+(defn- intro-request [buy-id sell-id]
+  {:op :introduction/make :subject buy-id :buy-side-id buy-id :sell-side-id sell-id})
+
+(defn- intro-proposal [db buy-id sell-id]
+  {:summary "x" :rationale "y" :cites ["basis" "provenance"]
+   :effect :introduction/record
+   :value {:pairing-id (r/pairing-id buy-id sell-id)
+           :buy-side-id buy-id :sell-side-id sell-id
+           :fit-score (r/compute-fit-score (store/mandate db buy-id)
+                                           (store/mandate db sell-id))}
+   :stake :actuation/make-introduction :confidence 0.9})
+
+;; ---------------------------------------------------------------- control
+
+(deftest clean-screening-has-no-violations
+  (let [db (store/seed-db)
+        req {:op :pairing/screen :subject "buy-1" :buy-side-id "buy-1" :sell-side-id "sell-1"}
+        v (gov/check req ctx (matchllm/infer db req) db)]
+    (is (= [] (rules v)))
+    (is (false? (:hard? v)))
+    (is (true? (:ok? v)))))
+
+(deftest clean-introduction-escalates-but-does-not-hold
+  (let [db (store/seed-db)]
+    (screened! db "buy-1" "sell-1")
+    (let [v (gov/check (intro-request "buy-1" "sell-1") ctx
+                       (intro-proposal db "buy-1" "sell-1") db)]
+      (is (= [] (rules v)))
+      (is (false? (:hard? v)))
+      (testing "a real disclosure always reaches a human, even with a clean sheet"
+        (is (true? (:escalate? v)))
+        (is (true? (:high-stakes? v)))
+        (is (false? (:ok? v)))))))
+
+;; ---------------------------------------------------------------- 1. spec basis
+
+(deftest no-spec-basis-is-hard
+  (let [db (store/seed-db)
+        req {:op :pairing/screen :subject "buy-1" :buy-side-id "buy-1" :sell-side-id "sell-3"}
+        v (gov/check req ctx (matchllm/infer db (assoc req :no-spec? true)) db)]
+    (is (= [:no-spec-basis] (rules v)))
+    (is (true? (:hard? v))))
+  (testing "an explicit nil :spec-basis is caught even when :cites is non-empty"
+    (let [db (store/seed-db)
+          req {:op :pairing/screen :subject "buy-1" :buy-side-id "buy-1" :sell-side-id "sell-1"}
+          v (gov/check req ctx {:cites ["something"] :value {:spec-basis nil} :confidence 0.9} db)]
+      (is (= [:no-spec-basis] (rules v))))))
+
+;; ---------------------------------------------------------------- 2. evidence
+
+(deftest evidence-incomplete-is-hard
+  (testing "an introduction with no screening on file"
+    (let [db (store/seed-db)
+          v (gov/check (intro-request "buy-1" "sell-1") ctx
+                       (intro-proposal db "buy-1" "sell-1") db)]
+      (is (= [:evidence-incomplete] (rules v)))))
+  (testing "a screening that is on file but not eligible is not evidence either"
+    (let [db (store/seed-db)
+          pid (r/pairing-id "buy-1" "sell-1")]
+      (store/commit-record! db {:effect :screening/set :path [pid]
+                                :payload {:pairing-id pid :verdict :blocked
+                                          :checklist (facts/evidence-checklist "JPN")}})
+      (is (= [:evidence-incomplete]
+             (rules (gov/check (intro-request "buy-1" "sell-1") ctx
+                               (intro-proposal db "buy-1" "sell-1") db))))))
+  (testing "an eligible screening with a short checklist is not evidence either"
+    (let [db (store/seed-db)
+          pid (r/pairing-id "buy-1" "sell-1")]
+      (store/commit-record! db {:effect :screening/set :path [pid]
+                                :payload {:pairing-id pid :verdict :eligible
+                                          :checklist (take 1 (facts/evidence-checklist "JPN"))}})
+      (is (= [:evidence-incomplete]
+             (rules (gov/check (intro-request "buy-1" "sell-1") ctx
+                               (intro-proposal db "buy-1" "sell-1") db)))))))
+
+;; ---------------------------------------------------------------- 3. verification
+
+(deftest unverified-counterparty-is-hard
+  (testing "on an introduction -- isolated because sell-2 names buy-2 in its consent list"
+    (let [db (store/seed-db)]
+      (screened! db "buy-2" "sell-2")
+      (is (= [:counterparty-unverified]
+             (rules (gov/check (intro-request "buy-2" "sell-2") ctx
+                               (intro-proposal db "buy-2" "sell-2") db))))))
+  (testing "and on a shortlist, before anything is disclosed at all"
+    (let [db (store/seed-db)
+          req {:op :shortlist/rank :subject "buy-2"}
+          v (gov/check req ctx (matchllm/infer db req) db)]
+      (is (= [:counterparty-unverified] (rules v)))))
+  (testing "control: the same shortlist for a verified buyer is clean"
+    (let [db (store/seed-db)
+          req {:op :shortlist/rank :subject "buy-1"}]
+      (is (= [] (rules (gov/check req ctx (matchllm/infer db req) db)))))))
+
+;; ---------------------------------------------------------------- 4. confidentiality
+
+(deftest confidentiality-breach-is-hard
+  (let [db (store/seed-db)
+        req {:op :shortlist/rank :subject "buy-1"}]
+    (testing "a leaked name with no NDA for that pairing"
+      (let [v (gov/check req ctx (matchllm/infer db (assoc req :leak? true)) db)]
+        (is (= [:confidentiality-breach] (rules v)))
+        (is (true? (:hard? v)))))
+    (testing "control: the same shortlist without the leak is clean"
+      (is (= [] (rules (gov/check req ctx (matchllm/infer db req) db)))))))
+
+(deftest confidentiality-honours-an-executed-nda
+  (testing "the gate discriminates on the NDA, not on the presence of a name"
+    (let [db (store/seed-db)
+          named (fn [sell-id]
+                  {:cites ["c"] :confidence 0.9
+                   :value {:mandate-id "buy-1"
+                           :entries [{:sell-side-id sell-id
+                                      :fit-score (r/compute-fit-score
+                                                  (store/mandate db "buy-1")
+                                                  (store/mandate db sell-id))
+                                      :teaser {:id sell-id :company-name "名前"}}]}})
+          req {:op :shortlist/rank :subject "buy-1"}]
+      (testing "buy-1~sell-1 has an executed NDA -> the name may go"
+        (is (= [] (rules (gov/check req ctx (named "sell-1") db)))))
+      (testing "buy-1~sell-2 does not -> HARD"
+        (is (= [:confidentiality-breach] (rules (gov/check req ctx (named "sell-2") db))))))))
+
+(deftest unattributable-leak-fails-closed
+  (testing "a disclosure whose owner cannot be identified cannot be checked against any NDA"
+    (let [db (store/seed-db)
+          v (gov/check {:op :shortlist/rank :subject "buy-1"} ctx
+                       {:cites ["c"] :confidence 0.9
+                        :value {:mandate-id "buy-1" :entries [{:company-name "名前"}]}}
+                       db)]
+      (is (= [:confidentiality-breach] (rules v))))))
+
+(deftest mandate-intake-carrying-a-name-is-not-a-breach
+  (testing "the seller describing themselves addresses no buyer, so nothing is disclosed"
+    (let [db (store/seed-db)
+          req {:op :mandate/intake :subject "sell-9"
+               :patch {:id "sell-9" :side :sell :company-name "新規株式会社"}}
+          v (gov/check req ctx (matchllm/infer db req) db)]
+      (is (= [] (rules v)))
+      (is (false? (:hard? v))))))
+
+;; ---------------------------------------------------------------- 5. consent
+
+(deftest seller-consent-missing-is-hard
+  (testing "a no-go entry is an absolute veto"
+    (let [db (store/seed-db)]
+      (screened! db "buy-1" "sell-5")
+      (is (= [:seller-consent-missing]
+             (rules (gov/check (intro-request "buy-1" "sell-5") ctx
+                               (intro-proposal db "buy-1" "sell-5") db))))))
+  (testing "an :explicit policy admits only the buyers it names"
+    (let [db (store/seed-db)]
+      (screened! db "buy-3" "sell-1")
+      (is (= [:seller-consent-missing]
+             (rules (gov/check (intro-request "buy-3" "sell-1") ctx
+                               (intro-proposal db "buy-3" "sell-1") db))))))
+  (testing "an unrecognised consent policy admits nobody"
+    (let [db (store/seed-db)]
+      (store/commit-record! db {:effect :mandate/upsert
+                                :value (assoc (store/mandate db "sell-1")
+                                              :consent-policy :something-new)})
+      (screened! db "buy-1" "sell-1")
+      (is (= [:seller-consent-missing]
+             (rules (gov/check (intro-request "buy-1" "sell-1") ctx
+                               (intro-proposal db "buy-1" "sell-1") db)))))))
+
+;; ---------------------------------------------------------------- 6. conflict
+
+(deftest conflict-of-interest-is-hard
+  (testing "carried on file by the seller"
+    (let [db (store/seed-db)
+          req {:op :pairing/screen :subject "buy-1" :buy-side-id "buy-1" :sell-side-id "sell-4"}
+          v (gov/check req ctx (matchllm/infer db req) db)]
+      (is (= [:conflict-of-interest] (rules v)))))
+  (testing "reported by the proposal itself, so the screening op can hold on its own finding"
+    (let [db (store/seed-db)
+          req {:op :pairing/screen :subject "buy-1" :buy-side-id "buy-1" :sell-side-id "sell-1"}
+          v (gov/check req ctx {:cites ["c"] :confidence 0.9
+                                :value {:spec-basis "x" :reason :conflict-of-interest}} db)]
+      (is (= [:conflict-of-interest] (rules v))))))
+
+;; ---------------------------------------------------------------- 7. fit score
+
+(deftest fit-score-mismatch-is-hard
+  (testing "on a shortlist"
+    (let [db (store/seed-db)
+          req {:op :shortlist/rank :subject "buy-1"}
+          v (gov/check req ctx (matchllm/infer db (assoc req :inflate? true)) db)]
+      (is (= [:fit-score-mismatch] (rules v)))))
+  (testing "on an introduction, off by one"
+    (let [db (store/seed-db)]
+      (screened! db "buy-1" "sell-1")
+      (let [p (update-in (intro-proposal db "buy-1" "sell-1") [:value :fit-score] dec)]
+        (is (= [:fit-score-mismatch]
+               (rules (gov/check (intro-request "buy-1" "sell-1") ctx p db))))))))
+
+;; ---------------------------------------------------------------- 8. double
+
+(deftest double-introduction-is-hard
+  (let [db (store/seed-db)
+        pid (screened! db "buy-1" "sell-1")]
+    (is (false? (store/pairing-already-introduced? db pid)))
+    (store/commit-record! db {:effect :introduction/record :path [pid]
+                              :payload {:pairing-id pid}})
+    (is (true? (store/pairing-already-introduced? db pid)))
+    (is (= [:double-introduction]
+           (rules (gov/check (intro-request "buy-1" "sell-1") ctx
+                             (intro-proposal db "buy-1" "sell-1") db))))))
+
+;; ---------------------------------------------------------------- soft gate
+
+(deftest confidence-gate-fails-closed
+  (let [db (store/seed-db)
+        req {:op :pairing/screen :subject "buy-1" :buy-side-id "buy-1" :sell-side-id "sell-1"}
+        base {:cites ["c"] :value {:spec-basis "x"}}
+        v (fn [conf] (gov/check req ctx (assoc base :confidence conf) db))]
+    (testing "above the floor commits"
+      (is (true? (:ok? (v 0.9)))))
+    (testing "below the floor escalates"
+      (is (true? (:escalate? (v 0.5))))
+      (is (false? (:hard? (v 0.5)))))
+    (testing "out of range escalates rather than counting as high"
+      (is (true? (:escalate? (v 1.5))))
+      (is (true? (:escalate? (v -0.1)))))
+    (testing "a non-numeric confidence escalates"
+      (is (true? (:escalate? (v nil))))
+      (is (true? (:escalate? (v "0.99")))))))
+
+(deftest hold-fact-carries-the-rules
+  (let [db (store/seed-db)
+        req {:op :shortlist/rank :subject "buy-1"}
+        v (gov/check req ctx (matchllm/infer db (assoc req :leak? true)) db)
+        f (gov/hold-fact req ctx v)]
+    (is (= :governor-hold (:t f)))
+    (is (= :hold (:disposition f)))
+    (is (= [:confidentiality-breach] (:basis f)))
+    (is (= "op-1" (:actor f)))))

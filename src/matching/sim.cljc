@@ -1,0 +1,112 @@
+(ns matching.sim
+  "Demo driver -- `clojure -M:dev:run`, or under nbb via
+  `test/run_sim.cljs`.
+
+  Walks a clean pairing all the way through (mandate intake -> counterparty
+  verification -> pairing screening -> shortlist -> introduction, with the
+  introduction escalating to a human as it always must), then shows the six
+  HARD holds that never reach a human at all:
+
+    a jurisdiction with no spec-basis          (:no-spec?)
+    a seller's name in a buyer-facing shortlist (:leak?)
+    a fabricated fit score                      (:inflate?)
+    an unverified counterparty
+    a seller who excluded this buyer by name
+    an adviser conflicted on both sides
+    the same pairing introduced twice
+
+  Finally it prints the audit ledger and the draft introduction records.
+  Every line of output is a consequence of the code above it -- nothing
+  here is narrated."
+  (:require [langgraph.graph :as g]
+            [matching.store :as store]
+            [matching.operation :as op]))
+
+(def operator {:actor-id "op-1" :actor-role :intermediary :phase 3})
+
+(defn- exec! [actor tid request context]
+  (g/run* actor {:request request :context context} {:thread-id tid}))
+
+(defn- approve! [actor tid]
+  (g/run* actor {:approval {:status :approved :by "op-1"}} {:thread-id tid :resume? true}))
+
+(defn -main [& _]
+  (let [db (store/seed-db)
+        actor (op/build db)]
+    (println "== mandate/intake sell-6 (new sell-side mandate; auto-commits at phase 3) ==")
+    (println (exec! actor "t1" {:op :mandate/intake :subject "sell-6"
+                                :patch {:id "sell-6" :side :sell :jurisdiction "JPN"
+                                        :company-name "六郷精機株式会社"
+                                        :industry :precision-machinery :geography "JPN"
+                                        :deal-type :majority :revenue 700 :employees 55
+                                        :consent-policy :any-verified :consented #{} :no-go #{}}}
+                     operator))
+    (println "   NOTE: the patch carries :company-name and is NOT held --")
+    (println "   it addresses no buyer, so nothing is disclosed to anyone.")
+
+    (println "== counterparty/verify sell-6 (escalates -- human approves) ==")
+    (println (exec! actor "t2" {:op :counterparty/verify :subject "sell-6"} operator))
+    (println (approve! actor "t2"))
+
+    (println "== pairing/screen buy-1 x sell-1 (escalates -- human approves) ==")
+    (println (exec! actor "t3" {:op :pairing/screen :subject "buy-1"
+                                :buy-side-id "buy-1" :sell-side-id "sell-1"} operator))
+    (println (approve! actor "t3"))
+
+    (println "== shortlist/rank buy-1 (clean, blind teasers only -> auto-commits) ==")
+    (println (exec! actor "t4" {:op :shortlist/rank :subject "buy-1"} operator))
+
+    (println "== pairing/explain buy-1 x sell-1 (READ op -- writes nothing) ==")
+    (println (exec! actor "t5" {:op :pairing/explain :subject "buy-1"
+                                :buy-side-id "buy-1" :sell-side-id "sell-1"} operator))
+
+    (println "== introduction/make buy-1 x sell-1 (always escalates -- actuation) ==")
+    (let [r (exec! actor "t6" {:op :introduction/make :subject "buy-1"
+                               :buy-side-id "buy-1" :sell-side-id "sell-1"} operator)]
+      (println r)
+      (println "-- human intermediary approves --")
+      (println (approve! actor "t6")))
+
+    (println "== pairing/screen buy-1 x sell-3, :no-spec? (-> HARD no-spec-basis) ==")
+    (println (exec! actor "t7" {:op :pairing/screen :subject "buy-1"
+                                :buy-side-id "buy-1" :sell-side-id "sell-3"
+                                :no-spec? true} operator))
+
+    (println "== shortlist/rank buy-1, :leak? (-> HARD confidentiality-breach) ==")
+    (println (exec! actor "t8" {:op :shortlist/rank :subject "buy-1" :leak? true} operator))
+
+    (println "== shortlist/rank buy-1, :inflate? (-> HARD fit-score-mismatch) ==")
+    (println (exec! actor "t9" {:op :shortlist/rank :subject "buy-1" :inflate? true} operator))
+
+    ;; The next two holds are each meant to demonstrate ONE gate. That only
+    ;; works if the pairing is screened first: an unscreened pairing also
+    ;; trips :no-spec-basis and :evidence-incomplete, and a hold on three
+    ;; rules is not evidence that any particular one of them works. This is
+    ;; the same discipline the tests use -- pin the rule, not the hold.
+    (println "== pairing/screen buy-2 x sell-2, then introduction (isolates :counterparty-unverified) ==")
+    (println (exec! actor "t10a" {:op :pairing/screen :subject "buy-2"
+                                  :buy-side-id "buy-2" :sell-side-id "sell-2"} operator))
+    (println (approve! actor "t10a"))
+    (println (exec! actor "t10" {:op :introduction/make :subject "buy-2"
+                                 :buy-side-id "buy-2" :sell-side-id "sell-2"} operator))
+
+    (println "== pairing/screen buy-1 x sell-5, then introduction (isolates :seller-consent-missing) ==")
+    (println (exec! actor "t11a" {:op :pairing/screen :subject "buy-1"
+                                  :buy-side-id "buy-1" :sell-side-id "sell-5"} operator))
+    (println (approve! actor "t11a"))
+    (println (exec! actor "t11" {:op :introduction/make :subject "buy-1"
+                                 :buy-side-id "buy-1" :sell-side-id "sell-5"} operator))
+
+    (println "== pairing/screen buy-1 x sell-4 (conflict on file -> HARD) ==")
+    (println (exec! actor "t12" {:op :pairing/screen :subject "buy-1"
+                                 :buy-side-id "buy-1" :sell-side-id "sell-4"} operator))
+
+    (println "== introduction/make buy-1 x sell-1 AGAIN (-> HARD double-introduction) ==")
+    (println (exec! actor "t13" {:op :introduction/make :subject "buy-1"
+                                 :buy-side-id "buy-1" :sell-side-id "sell-1"} operator))
+
+    (println "== audit ledger ==")
+    (doseq [f (store/ledger db)] (println f))
+
+    (println "== draft introduction records ==")
+    (doseq [r (store/introduction-history db)] (println r))))

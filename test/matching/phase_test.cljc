@@ -1,0 +1,78 @@
+(ns matching.phase-test
+  "The phase table as executable tests. The invariant this repo cannot
+  regress on: `:introduction/make` must NEVER be a member of any phase's
+  `:auto` set."
+  (:require [clojure.test :refer [deftest is testing]]
+            [matching.phase :as phase]))
+
+(deftest introduction-never-auto-at-any-phase
+  (testing "structural invariant: no phase, including ones added later, auto-commits a disclosure"
+    (doseq [[n {:keys [auto]}] phase/phases]
+      (is (not (contains? auto :introduction/make))
+          (str "phase " n " must not auto-commit :introduction/make")))))
+
+(deftest screening-never-auto-at-any-phase
+  (testing "a screening verdict is a compliance judgement; the actor that benefits does not sign it"
+    (doseq [[n {:keys [auto]}] phase/phases
+            op [:counterparty/verify :pairing/screen]]
+      (is (not (contains? auto op))
+          (str "phase " n " must not auto-commit " op)))))
+
+(deftest auto-is-always-a-subset-of-writes
+  (doseq [[n {:keys [writes auto]}] phase/phases]
+    (is (every? writes auto) (str "phase " n " auto-commits an op it may not write"))))
+
+(deftest read-and-write-ops-are-disjoint
+  (is (empty? (filter phase/write-ops phase/read-ops))))
+
+(deftest default-phase-exists
+  (is (contains? phase/phases phase/default-phase)))
+
+(deftest governor-hold-always-wins
+  (testing "compliance beats rollout: no phase can turn a HARD hold into anything else"
+    (doseq [[n _] phase/phases
+            op (concat phase/write-ops phase/read-ops)]
+      (is (= :hold (:disposition (phase/gate n {:op op} :hold)))
+          (str "phase " n " softened a hold for " op)))))
+
+(deftest phase-zero-writes-nothing
+  (doseq [op phase/write-ops]
+    (let [{:keys [disposition reason]} (phase/gate 0 {:op op} :commit)]
+      (is (= :hold disposition) (str "phase 0 permitted a write: " op))
+      (is (= :phase-disabled reason)))))
+
+(deftest phase-three-auto-and-approval
+  (testing "an auto-eligible op with a clean governor commits"
+    (is (= {:disposition :commit :reason nil}
+           (phase/gate 3 {:op :mandate/intake} :commit)))
+    (is (= {:disposition :commit :reason nil}
+           (phase/gate 3 {:op :shortlist/rank} :commit))))
+  (testing "an enabled but non-auto op escalates even when the governor is clean"
+    (doseq [op [:counterparty/verify :pairing/screen :introduction/make]]
+      (is (= {:disposition :escalate :reason :phase-approval}
+             (phase/gate 3 {:op op} :commit))
+          (str op " should have required approval")))))
+
+(deftest read-ops-are-not-phase-gated
+  (testing "reading writes nothing, so no phase has anything to withhold"
+    (doseq [n (keys phase/phases)]
+      (is (= {:disposition :commit :reason nil}
+             (phase/gate n {:op :pairing/explain} :commit))))))
+
+(deftest unknown-op-fails-closed
+  (testing "an op this namespace does not recognise must not inherit a known op's permissions"
+    (is (= {:disposition :hold :reason :phase-disabled}
+           (phase/gate 3 {:op :something/new} :commit)))
+    (is (= {:disposition :hold :reason :phase-disabled}
+           (phase/gate 3 {:op nil} :commit)))))
+
+(deftest unknown-phase-falls-back-to-default
+  (is (= (phase/gate phase/default-phase {:op :mandate/intake} :commit)
+         (phase/gate 99 {:op :mandate/intake} :commit)))
+  (is (= (phase/gate phase/default-phase {:op :introduction/make} :commit)
+         (phase/gate nil {:op :introduction/make} :commit))))
+
+(deftest verdict-to-disposition
+  (is (= :hold (phase/verdict->disposition {:hard? true :escalate? true})))
+  (is (= :escalate (phase/verdict->disposition {:hard? false :escalate? true})))
+  (is (= :commit (phase/verdict->disposition {:hard? false :escalate? false}))))
