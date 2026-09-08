@@ -5,7 +5,7 @@
   These are the tests that prove the layers actually compose -- a governor
   that refuses in isolation but whose refusal never reaches the graph
   would pass every test in `governor_contract_test` and still commit."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [langgraph.graph :as g]
             [matching.operation :as op]

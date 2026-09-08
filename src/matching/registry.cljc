@@ -25,7 +25,7 @@
   that `confidential-fields` has exactly one definition and the governor
   and the advisor cannot drift apart on what 'non-public' means. A field
   is confidential unless this function passes it through."
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 ;; ----------------------------- fit score -----------------------------
 
@@ -174,7 +174,7 @@
     (throw (ex-info "introduction: jurisdiction required" {})))
   (when (neg? sequence)
     (throw (ex-info "introduction: sequence must be >= 0" {})))
-  (let [intro-number (str (str/upper-case jurisdiction) "-INT-" (zero-pad sequence 6))
+  (let [intro-number (str (str/upper jurisdiction) "-INT-" (zero-pad sequence 6))
         record {"record_id" intro-number
                 "kind" "introduction-draft"
                 "pairing_id" (pairing-id buy-side-id sell-side-id)
