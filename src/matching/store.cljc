@@ -22,7 +22,7 @@
   party that gave it; there is no separate party table. That is a real
   simplification (one holder may run several mandates) and it is made
   here, once, rather than implied by the code."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [matching.registry :as registry]))
 
 (defprotocol Store
