@@ -53,7 +53,7 @@ sibling projects `FORKED_FROM.md` names.
 
 **Make the documentation a checkable artefact rather than a description.**
 
-1. Add `scripts/verify-repo-claims.cljs` — seven assertions over what is actually
+1. Add `scripts/verify-repo-claims.cljk` — seven assertions over what is actually
    here, plus an observation section that measures the known drift. Assertions
    move the exit code; observations never do, and print under a different prefix.
 
@@ -158,5 +158,5 @@ Not started, and deliberately not partially faked:
   `reports/fundmanager-mcp-readiness.md`
 - tests. There are none, and the repository ships no Clojure, so the superproject
   maturity scan's `test/` + `.cljc|.cljs|.clj|.kotoba` convention measures zero
-  here. `scripts/verify-repo-claims.cljs` is a verifier, not a test suite, and
+  here. `scripts/verify-repo-claims.cljk` is a verifier, not a test suite, and
   sits outside `test/` on purpose — it is not counted, and was not written to be.

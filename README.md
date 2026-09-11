@@ -27,10 +27,10 @@ If you are trying to run something, start with
 ```bash
 # the actor: 53 tests, 264 assertions (0 = pass, 1 = fail, 2 = could not answer)
 nbb --classpath "src:test:../../kotoba-lang/langgraph/src:../../kotoba-lang/langchain/src" \
-    test/run_tests.cljs
+    test/run_tests.cljk
 
 # the repository's own claims: 7 checks (0 = pass, 1 = fail, 2 = could not answer)
-nbb scripts/verify-repo-claims.cljs
+nbb scripts/verify-repo-claims.cljk
 
 cd ui && python3 -m http.server 8731  # then open http://127.0.0.1:8731/index.html
 ```
@@ -109,7 +109,7 @@ not implement, expose or answer for any of the ten identifiers below.
 This table and `ui/app.js` are pinned to each other — `verify-repo-claims.cljs`
 fails if they diverge.
 
-### `scripts/verify-repo-claims.cljs`
+### `scripts/verify-repo-claims.cljk`
 
 Checks that the repository still matches its own claims: the EDN and JSON-LD
 files parse, the extraction arithmetic in `migration.edn` holds at the extraction
@@ -171,7 +171,7 @@ about a different checkout. Details in
 
 ```
 src/matching/    the Matching-stage actor — implemented, tested, governed
-test/matching/   the portable .cljc suite; test/run_tests.cljs is the nbb runner
+test/matching/   the portable .cljc suite; test/run_tests.cljk is the nbb runner
 deps.edn         nbb is the primary gate, clojure -M:dev:test the compat one
 ui/              static dashboard — index.html, app.js, styles.css
 scripts/         verify-repo-claims.cljs (current) + two legacy scripts (do not run)

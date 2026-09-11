@@ -3,7 +3,7 @@
 ```bash
 # from orgs/cloud-itonami/ma inside the com-junkawasaki superproject
 nbb --classpath "src:test:../../kotoba-lang/langgraph/src:../../kotoba-lang/langchain/src" \
-    test/run_tests.cljs
+    test/run_tests.cljk
 ```
 
 `0` all passed · `1` something failed · `2` the run could not be trusted.

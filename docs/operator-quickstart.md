@@ -35,7 +35,7 @@ west update --fetch smart ma
 ## 2. Check that the repository still matches its own claims
 
 ```bash
-nbb scripts/verify-repo-claims.cljs
+nbb scripts/verify-repo-claims.cljk
 ```
 
 ```
@@ -107,7 +107,7 @@ checkout at `orgs/cloud-itonami/ma`. A standalone clone must point the two
 
 ```bash
 nbb --classpath "src:test:../../kotoba-lang/langgraph/src:../../kotoba-lang/langchain/src" \
-    test/run_tests.cljs
+    test/run_tests.cljk
 ```
 
 ```
@@ -139,7 +139,7 @@ The exit code is three-valued for the same reason step 2's is, and for one more:
 | `2` | fewer assertions ran than the suite is known to contain — the run measured too little to be trusted, which is neither a pass nor a failure |
 
 That third case is not decoration. Under a ClojureScript host `run-tests` sets no
-exit code at all, so without `test/run_tests.cljs`'s `:end-run-tests` method a
+exit code at all, so without `test/run_tests.cljk`'s `:end-run-tests` method a
 failing suite prints `FAIL` and exits `0`; and a run whose `:require` list broke
 loads nothing, asserts nothing, and exits `0` in exactly the same way a clean run
 does. Both were measured before this was committed:
@@ -272,11 +272,11 @@ first pair; the second group is unverified design material.
 |---|---|
 | the pipeline, actor list, or stage table shown in the UI | `ui/app.js` (then rerun step 2 — `ui-renders` and `actors-readme-eq-ui` both cover it) |
 | the actor names in prose | `README.md` **and** `ui/app.js` together; step 2 fails if they diverge |
-| what step 2 checks | `scripts/verify-repo-claims.cljs`; keep `expected-checks` equal to the number of `check!` calls, or the run exits 2 |
-| the Matching actor's rules | `src/matching/governor.cljc` — and add the paired case to `test/matching/governor_contract_test.cljc`, asserting the rule name rather than only that something was held |
-| which jurisdictions can be screened | `src/matching/facts.cljc`; cite a real source, never invent one |
-| what a buyer may see pre-NDA | `src/matching/registry.cljc`'s `confidential-fields` / `blind-teaser` — one definition, read by both the advisor and the governor |
-| the rollout gate | `src/matching/phase.cljc`; `:introduction/make` must stay out of every `:auto` set |
+| what step 2 checks | `scripts/verify-repo-claims.cljk`; keep `expected-checks` equal to the number of `check!` calls, or the run exits 2 |
+| the Matching actor's rules | `src/matching/governor.cljk` — and add the paired case to `test/matching/governor_contract_test.cljk`, asserting the rule name rather than only that something was held |
+| which jurisdictions can be screened | `src/matching/facts.cljk`; cite a real source, never invent one |
+| what a buyer may see pre-NDA | `src/matching/registry.cljk`'s `confidential-fields` / `blind-teaser` — one definition, read by both the advisor and the governor |
+| the rollout gate | `src/matching/phase.cljk`; `:introduction/make` must stay out of every `:auto` set |
 
 MCP endpoints and deployment are open work, not changes to an existing
 implementation. See docs/adr/0001 and docs/adr/0002.

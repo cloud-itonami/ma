@@ -1,7 +1,7 @@
 #!/usr/bin/env nbb
 ;; What this repository actually contains, checked against what it says it contains.
 ;;
-;; Run:  nbb scripts/verify-repo-claims.cljs
+;; Run:  nbb scripts/verify-repo-claims.cljk
 ;;
 ;; Exit codes are three-valued on purpose (ADR-2608136000 in the superproject):
 ;;   0  every check ran and passed
