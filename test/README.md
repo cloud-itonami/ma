@@ -2,7 +2,7 @@
 
 ```bash
 # from orgs/cloud-itonami/ma inside the com-junkawasaki superproject
-nbb --classpath "src:test:../../kotoba-lang/langgraph/src:../../kotoba-lang/langchain/src" \
+kbb --backend sci --classpath "src:test:../../kotoba-lang/langgraph/src:../../kotoba-lang/langchain/src" \
     test/run_tests.cljk
 ```
 
@@ -18,7 +18,7 @@ suite grows, never lower it to make a run green.
 The suite is portable `.cljc` and runs unchanged on the JVM as the compat gate:
 
 ```bash
-clojure -M:dev:test
+kbb -M:dev:test
 ```
 
 Both report the same counts. nbb is primary, per the runtime-priority rule in the

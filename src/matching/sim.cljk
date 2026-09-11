@@ -1,5 +1,5 @@
 (ns matching.sim
-  "Demo driver -- `clojure -M:dev:run`, or under nbb via
+  "Demo driver -- `kbb -M:dev:run`, or under nbb via
   `test/run_sim.cljs`.
 
   Walks a clean pairing all the way through (mandate intake -> counterparty

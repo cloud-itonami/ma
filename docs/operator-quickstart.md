@@ -35,7 +35,7 @@ west update --fetch smart ma
 ## 2. Check that the repository still matches its own claims
 
 ```bash
-nbb scripts/verify-repo-claims.cljk
+kbb --backend sci scripts/verify-repo-claims.cljk
 ```
 
 ```
@@ -106,7 +106,7 @@ checkout at `orgs/cloud-itonami/ma`. A standalone clone must point the two
 `../../kotoba-lang/...` paths at its own copies.
 
 ```bash
-nbb --classpath "src:test:../../kotoba-lang/langgraph/src:../../kotoba-lang/langchain/src" \
+kbb --backend sci --classpath "src:test:../../kotoba-lang/langgraph/src:../../kotoba-lang/langchain/src" \
     test/run_tests.cljk
 ```
 
@@ -157,7 +157,7 @@ caught, and neither one alone is what stops an introduction from committing
 unattended.
 
 The same suite is portable `.cljc` and runs unchanged on the JVM
-(`clojure -M:dev:test` from inside the monorepo checkout) — `Ran 53 tests
+(`kbb -M:dev:test` from inside the monorepo checkout) — `Ran 53 tests
 containing 264 assertions. 0 failures, 0 errors.` nbb is the primary gate and the
 JVM the compat one, following the runtime-priority rule in the superproject's
 `CLAUDE.md`.
@@ -165,7 +165,7 @@ JVM the compat one, following the runtime-priority rule in the superproject's
 To watch one deal walk the pipeline, plus the seven refusals:
 
 ```bash
-nbb --classpath "src:../../kotoba-lang/langgraph/src:../../kotoba-lang/langchain/src" \
+kbb --backend sci --classpath "src:../../kotoba-lang/langgraph/src:../../kotoba-lang/langchain/src" \
     -e "(require '[matching.sim :as s]) (s/-main)"
 ```
 
