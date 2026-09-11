@@ -131,14 +131,14 @@ oversights:
 ## Evidence
 
 53 tests, 264 assertions, 6 namespaces. Primary gate is nbb
-(`test/run_tests.cljs`), following the superproject's runtime-priority rule;
+(`test/run_tests.cljk`), following the superproject's runtime-priority rule;
 `clojure -M:dev:test` runs the same portable `.cljc` suite on the JVM and reports
 the identical counts.
 
 Written against the questions in superproject ADR-2608136000:
 
 - **What does it return with no input?** Not a pass. `min-assertions` in
-  `test/run_tests.cljs` is an evidence floor: a run that asserts less than the
+  `test/run_tests.cljk` is an evidence floor: a run that asserts less than the
   suite is known to contain prints `REFUSING to report a result` and exits **2**,
   which is neither the pass code nor the failure code. Verified by raising the
   floor above the real count.
@@ -182,7 +182,7 @@ Written against the questions in superproject ADR-2608136000:
   confidentiality mutation failed ten assertions and every one of them was in a
   confidentiality test; nothing else moved.
 
-`scripts/verify-repo-claims.cljs` still reports `CHECKS 7/7 OK` — the actor adds
+`scripts/verify-repo-claims.cljk` still reports `CHECKS 7/7 OK` — the actor adds
 files but does not touch the claims that check pins.
 
 ## Consequences
