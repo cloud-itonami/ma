@@ -26,11 +26,11 @@ If you are trying to run something, start with
 
 ```bash
 # the actor: 53 tests, 264 assertions (0 = pass, 1 = fail, 2 = could not answer)
-nbb --classpath "src:test:../../kotoba-lang/langgraph/src:../../kotoba-lang/langchain/src" \
+kbb --backend sci --classpath "src:test:../../kotoba-lang/langgraph/src:../../kotoba-lang/langchain/src" \
     test/run_tests.cljk
 
 # the repository's own claims: 7 checks (0 = pass, 1 = fail, 2 = could not answer)
-nbb scripts/verify-repo-claims.cljk
+kbb --backend sci scripts/verify-repo-claims.cljk
 
 cd ui && python3 -m http.server 8731  # then open http://127.0.0.1:8731/index.html
 ```
@@ -73,8 +73,8 @@ when it cannot tell whose secret it is. `matching.matchllm` can be asked to leak
 on purpose (`:leak?`), so that gate has been shown refusing and permitting the
 same field for different pairings.
 
-Run the demo: `nbb --classpath "src:../../kotoba-lang/langgraph/src:../../kotoba-lang/langchain/src" -e "(require '[matching.sim :as s]) (s/-main)"`,
-or `clojure -M:dev:run` from inside the monorepo checkout.
+Run the demo: `kbb --backend sci --classpath "src:../../kotoba-lang/langgraph/src:../../kotoba-lang/langchain/src" -e "(require '[matching.sim :as s]) (s/-main)"`,
+or `kbb -M:dev:run` from inside the monorepo checkout.
 
 
 ### `ui/` — a working static dashboard
@@ -172,7 +172,7 @@ about a different checkout. Details in
 ```
 src/matching/    the Matching-stage actor — implemented, tested, governed
 test/matching/   the portable .cljc suite; test/run_tests.cljk is the nbb runner
-deps.edn         nbb is the primary gate, clojure -M:dev:test the compat one
+deps.edn         nbb is the primary gate, kbb -M:dev:test the compat one
 ui/              static dashboard — index.html, app.js, styles.css
 scripts/         verify-repo-claims.cljs (current) + two legacy scripts (do not run)
 docs/            operator-quickstart.md, adr/

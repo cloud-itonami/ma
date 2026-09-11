@@ -15,7 +15,7 @@
  :aliases
  {:dev {:override-deps {io.github.kotoba-lang/langchain
                         {:local/root "../../kotoba-lang/langchain"}}}
-  ;; clojure -M:dev:run  -> drive the demo through one OperationActor
+  ;; kbb -M:dev:run  -> drive the demo through one OperationActor
   :run {:main-opts ["-m" "matching.sim"]}
   ;; SECONDARY compat gate. The PRIMARY gate is nbb (see test/README.md and
   ;; the runtime-priority rule in the superproject CLAUDE.md: kotoba wasm >

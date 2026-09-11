@@ -132,7 +132,7 @@ oversights:
 
 53 tests, 264 assertions, 6 namespaces. Primary gate is nbb
 (`test/run_tests.cljk`), following the superproject's runtime-priority rule;
-`clojure -M:dev:test` runs the same portable `.cljc` suite on the JVM and reports
+`kbb -M:dev:test` runs the same portable `.cljc` suite on the JVM and reports
 the identical counts.
 
 Written against the questions in superproject ADR-2608136000:
