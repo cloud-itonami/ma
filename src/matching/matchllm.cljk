@@ -39,7 +39,7 @@
      :value      map          ; the payload -- SCANNED by the leak gate
      :stake      kw|nil       ; :actuation/make-introduction | nil
      :confidence 0..1}"
-  (:require #?(:clj  [clojure.edn :as edn]
+  (:require #?(:clj  [kotoba.lang.edn :as edn]
                :cljs [cljs.reader :as edn])
             [kotoba.lang.text :as str]
             [matching.facts :as facts]

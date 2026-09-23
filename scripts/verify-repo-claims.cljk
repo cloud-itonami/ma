@@ -15,7 +15,7 @@
 ;; "it is fine".
 
 (ns verify-repo-claims
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str]
             ["fs" :as fs]
             ["child_process" :as cp]))
