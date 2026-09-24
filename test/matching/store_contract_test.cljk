@@ -3,7 +3,7 @@
   (`MemStore`), so `implementations` has one entry -- but the tests are
   written against the protocol and driven from that list, so adding a
   datom-backed store means adding one entry here and nothing else."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [matching.registry :as r]
             [matching.store :as store]))
 

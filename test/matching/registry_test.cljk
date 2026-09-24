@@ -3,7 +3,7 @@
   the governor and get the most attention: `compute-fit-score` must be
   exactly reproducible, and `leaking-nodes` must not miss a nested leak or
   guess at whose it is."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [matching.registry :as r]))
 
 (def buyer {:id "b" :side :buy

@@ -10,7 +10,7 @@
 
   Every negative case is also paired with the control that must stay
   clean, because a gate that refuses everything is not a gate."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [matching.facts :as facts]
             [matching.governor :as gov]
             [matching.matchllm :as matchllm]

@@ -1,7 +1,7 @@
 (ns matching.facts-test
   "The approach-rule catalog as executable tests. The invariant: a
   jurisdiction that is not in the catalog must never look covered."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [matching.facts :as facts]))
 
 (deftest every-entry-is-fully-cited
