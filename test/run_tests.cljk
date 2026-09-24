@@ -29,7 +29,7 @@
   makes fewer assertions than the suite is known to contain refuses to
   report a pass, and exits 2 rather than 0 or 1, because 'I could not
   answer' is a third answer."
-  (:require [clojure.test :as t]
+  (:require [kotoba.test :as t]
             [matching.facts-test]
             [matching.registry-test]
             [matching.phase-test]

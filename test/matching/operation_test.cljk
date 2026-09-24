@@ -6,7 +6,7 @@
   that refuses in isolation but whose refusal never reaches the graph
   would pass every test in `governor_contract_test` and still commit."
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [langgraph.graph :as g]
             [matching.operation :as op]
             [matching.registry :as r]
