@@ -26,7 +26,7 @@
   ;; kbb -M:dev:run  -> drive the demo through one OperationActor
   :run {:main-opts ["-m" "matching.sim"]}
   ;; SECONDARY compat gate. The PRIMARY gate is nbb (see test/README.md and
-  ;; the runtime-priority rule in the superproject CLAUDE.md: kotoba wasm >
+  ;; the runtime-priority rule in the superproject AGENTS.md: kotoba wasm >
   ;; clojurewasm > ClojureScript/nbb > JVM). The suite is portable .cljc and
   ;; runs unchanged on both.
   :test {:extra-paths ["test"]

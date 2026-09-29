@@ -22,7 +22,7 @@ kbb -M:dev:test
 ```
 
 Both report the same counts. nbb is primary, per the runtime-priority rule in the
-superproject's `CLAUDE.md`.
+superproject's `AGENTS.md`.
 
 ## The classpath is not optional
 

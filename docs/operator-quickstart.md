@@ -160,7 +160,7 @@ The same suite is portable `.cljc` and runs unchanged on the JVM
 (`kbb -M:dev:test` from inside the monorepo checkout) — `Ran 53 tests
 containing 264 assertions. 0 failures, 0 errors.` nbb is the primary gate and the
 JVM the compat one, following the runtime-priority rule in the superproject's
-`CLAUDE.md`.
+`AGENTS.md`.
 
 To watch one deal walk the pipeline, plus the seven refusals:
 

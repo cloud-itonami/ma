@@ -1,7 +1,7 @@
 (ns run-tests
   "PRIMARY automated gate for the Matching actor, under nbb.
 
-  The runtime-priority rule in the superproject CLAUDE.md puts nbb above
+  The runtime-priority rule in the superproject AGENTS.md puts nbb above
   the JVM, and the whole suite is portable `.cljc`, so it runs unchanged
   here and under `kbb -M:dev:test`.
 
